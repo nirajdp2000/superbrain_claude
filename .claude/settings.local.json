@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --check src/services/token-store.mjs)",
+      "Bash(node --check src/services/upstox-service.mjs)",
+      "Bash(node --check src/services/trading-analysis-engine.mjs)",
+      "Bash(node --check src/services/scheduler.mjs)",
+      "Bash(node --check src/config.mjs)",
+      "Bash(node --check netlify/functions/refresh-upstox-token.mjs)",
+      "Bash(node --check netlify.toml)"
+    ]
+  }
+}
