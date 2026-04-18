@@ -3075,13 +3075,25 @@ export async function getStockIntelligenceAllStrategies(payload = {}) {
   let marketWideOpportunities = null;
   try {
     const { topSignalsService } = await import("./top-signals-service.mjs");
-    marketWideOpportunities = await topSignalsService.getOpportunitySnapshot(strategyToOpportunityTimeframe(primaryBase.strategy), 3);
+    // 4 s cap — same guard as buildDashboard. Fails fast so the ask response
+    // returns even when topSignalsService is backed up.
+    marketWideOpportunities = await raceOrFallback(
+      topSignalsService.getOpportunitySnapshot(strategyToOpportunityTimeframe(primaryBase.strategy), 3),
+      4000,
+      null,
+      "ask:topSignalsService.getOpportunitySnapshot",
+    );
   } catch {
     marketWideOpportunities = null;
   }
 
   const enrichedPrimary = attachMarketWideContext(
-    await enrichRowDeep(primaryBase, bundle?.candles || [], marketContext || {}),
+    await raceOrFallback(
+      enrichRowDeep(primaryBase, bundle?.candles || [], marketContext || {}),
+      4000,
+      primaryBase,
+      "ask:enrichRowDeep",
+    ),
     marketWideOpportunities
   );
   const strategyViews = strategyRows.map((row) => buildMultiStrategySummary(row, primaryBase.strategy)).filter(Boolean);

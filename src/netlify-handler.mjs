@@ -522,8 +522,35 @@ export async function handleNetlifyRequest(request) {
     }
 
     if (request.method === "POST" && pathname === "/api/ask") {
-      const answer = await askSuperbrain(await readJsonBody(request));
-      return withCors(request, jsonResponse(answer));
+      const body = await readJsonBody(request);
+      // Hard 20 s ceiling — same headroom as /api/dashboard. getStockIntelligenceAllStrategies
+      // runs up to 4 strategy passes + topSignals + enrichRowDeep and can exceed Netlify's
+      // 26 s kill-switch when upstream scrapers are slow.
+      let askTimedOut = false;
+      let askTimeoutId;
+      const askTimeout = new Promise((_, reject) => {
+        askTimeoutId = setTimeout(() => {
+          askTimedOut = true;
+          reject(new Error("ask_timeout"));
+        }, 20_000);
+      });
+      try {
+        const answer = await Promise.race([askSuperbrain(body), askTimeout]);
+        clearTimeout(askTimeoutId);
+        return withCors(request, jsonResponse(answer));
+      } catch (askErr) {
+        clearTimeout(askTimeoutId);
+        if (askTimedOut) {
+          return withCors(request, jsonResponse({
+            found: false,
+            timedOut: true,
+            query: body.query || "",
+            answer: "Analysis is taking too long — server is under load. Please try again in a moment.",
+            suggestions: [],
+          }, 200));  // 200 so the frontend receives the JSON, not a network error
+        }
+        throw askErr;
+      }
     }
 
     if (request.method === "GET" && pathname === "/api/news") {

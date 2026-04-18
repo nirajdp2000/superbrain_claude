@@ -2444,6 +2444,10 @@ export default function App() {
       return;
     }
 
+    // Clear previous result immediately so the UI never shows the OLD stock
+    // while waiting for the new one. If the user clicked "APOLLO" after
+    // viewing "ICICIBANK", we reset so the loading state is unambiguous.
+    setAnalysisResult(null);
     setAskLoading(true);
     setError("");
 
@@ -2453,6 +2457,10 @@ export default function App() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           query: trimmed,
+          // Pass the explicit symbol so the backend uses it directly instead
+          // of trying to extract it from the freetext query (which can fail for
+          // short names like APOLLO that have multiple variants).
+          symbol: symbol || undefined,
           includeAllStrategies: true,
         }),
       });
@@ -2477,14 +2485,22 @@ export default function App() {
         }
       }
 
-      setAnalysisResult(payload);
-      setActiveTab("Verdict");
-
-      if (payload.found) {
-        rememberAsk(trimmed, payload.symbol || symbol, payload.companyName || companyName);
+      // Backend timed out — show a friendly retry prompt instead of stale stock.
+      if (payload.timedOut) {
+        setError(`Analysis for ${symbol || payload.query || "this stock"} timed out — server is warming up. Try again in a moment.`);
+        setAnalysisResult(null);
+      } else {
+        setAnalysisResult(payload);
+        setActiveTab("Verdict");
+        if (payload.found) {
+          rememberAsk(trimmed, payload.symbol || symbol, payload.companyName || companyName);
+        }
       }
     } catch (nextError) {
-      setError(nextError.message || "Ask failed.");
+      const msg = nextError.message || "Ask failed.";
+      setError(msg.includes("502") || msg.includes("504") || msg.includes("timeout")
+        ? `Analysis for ${symbol || "this stock"} timed out — server is under load. Try again in a moment.`
+        : msg);
     } finally {
       setAskLoading(false);
     }
