@@ -1,6 +1,7 @@
 import { config, hasAdminToken, resolveAllowedOrigin } from "./config.mjs";
 import { getDefaultWatchlist } from "./data/universe.mjs";
 import { analyzeMarket, askSuperbrain, buildDashboard, getStockIntelligence } from "./services/analysis-service.mjs";
+import { dashboardCacheKey, getDashboardCache, setDashboardCache } from "./services/dashboard-cache.mjs";
 import { getMarketContext } from "./services/market-service.mjs";
 import { getNewsForSymbols, getNewsIntelligence } from "./services/news-service.mjs";
 import {
@@ -403,32 +404,55 @@ export async function handleNetlifyRequest(request) {
     }
 
     if (request.method === "GET" && pathname === "/api/dashboard") {
-      // Cap symbols to 6 to stay within Netlify's 26-second function limit.
-      const rawSymbols = (searchParams.get("symbols") || "")
-        .split(",").map((s) => s.trim()).filter(Boolean).slice(0, 6).join(",");
-      const DASHBOARD_TIMEOUT_MS = 24_000;
+      const strategy = searchParams.get("strategy") || "swing";
+      // Cap to 6 symbols to stay within Netlify's function time budget.
+      const symbolList = (searchParams.get("symbols") || "")
+        .split(",").map((s) => s.trim()).filter(Boolean).slice(0, 6);
+      const rawSymbols = symbolList.join(",");
+
+      // ── 1. Blob cache check (survives cold starts) ──────────────────────
+      const cKey = dashboardCacheKey(symbolList, strategy);
+      try {
+        const cached = await getDashboardCache(cKey);
+        if (cached) {
+          console.log("[dashboard] cache hit:", cKey);
+          return withCors(request, jsonResponse({ ...cached, _cached: true }));
+        }
+      } catch (cacheErr) {
+        console.warn("[dashboard] cache read failed:", cacheErr.message);
+      }
+
+      // ── 2. Compute with hard timeout ─────────────────────────────────────
+      const DASHBOARD_TIMEOUT_MS = 22_000; // leave 4 s headroom before Netlify kills at 26 s
       let timedOut = false;
-      const timeoutHandle = { id: null };
+      let timeoutId;
       const timeoutPromise = new Promise((_, reject) => {
-        timeoutHandle.id = setTimeout(() => {
+        timeoutId = setTimeout(() => {
           timedOut = true;
-          reject(new Error("Dashboard analysis timed out — try fewer symbols or refresh."));
+          reject(new Error("Dashboard timed out — showing partial or cached results. Refresh to retry."));
         }, DASHBOARD_TIMEOUT_MS);
       });
+
       try {
         const dashboard = await Promise.race([
           buildDashboard({
             symbols: rawSymbols,
-            strategy: searchParams.get("strategy") || "swing",
+            strategy,
             horizonDays: searchParams.get("horizonDays") || undefined,
             strictVerification: searchParams.get("strictVerification") || undefined,
           }),
           timeoutPromise,
         ]);
-        clearTimeout(timeoutHandle.id);
+        clearTimeout(timeoutId);
+
+        // ── 3. Persist result in Blobs for subsequent cold starts ──────────
+        setDashboardCache(cKey, dashboard).catch((err) =>
+          console.warn("[dashboard] cache write failed:", err.message),
+        );
+
         return withCors(request, jsonResponse(dashboard));
       } catch (dashErr) {
-        clearTimeout(timeoutHandle.id);
+        clearTimeout(timeoutId);
         if (timedOut) {
           return withCors(request, jsonResponse({
             error: dashErr.message,
