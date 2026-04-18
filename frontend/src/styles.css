@@ -2096,7 +2096,8 @@ body::after {
   max-width: 60ch;
 }
 
-.search-box {
+/* ── Dark-shell overrides for the search box ── */
+.search-shell .search-box {
   position: relative;
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(120, 193, 255, 0.22);
@@ -2104,6 +2105,108 @@ body::after {
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 20px 40px rgba(5, 15, 29, 0.22);
   backdrop-filter: blur(18px);
+}
+
+/* Pro search box in dark shell: frosted glass, override white bg */
+.search-shell .search-box-pro {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(120, 193, 255, 0.25);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 20px 40px rgba(5, 15, 29, 0.28);
+  backdrop-filter: blur(20px);
+}
+.search-shell .search-box-pro:focus-within {
+  border-color: rgba(74, 180, 255, 0.55);
+  box-shadow: 0 0 0 3px rgba(74, 180, 255, 0.18), 0 20px 40px rgba(5, 15, 29, 0.28);
+}
+
+/* Input text must be light in the dark shell */
+.search-shell .search-input-pro,
+.search-shell .search-input-pro:focus {
+  color: #f2f8ff;
+}
+.search-shell .search-input-pro::placeholder {
+  color: rgba(223, 238, 255, 0.42);
+}
+
+/* Mode chips */
+.search-shell .search-mode-chip {
+  color: rgba(200, 225, 255, 0.6);
+}
+.search-shell .search-mode-chip:hover {
+  color: rgba(220, 240, 255, 0.9);
+}
+.search-shell .search-mode-chip.active {
+  background: rgba(74, 180, 255, 0.18);
+  color: #7dd3fc;
+}
+
+/* Clear button & kbd hint */
+.search-shell .search-clear {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(220, 235, 255, 0.7);
+}
+.search-shell .search-kbd-hint {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(120, 193, 255, 0.22);
+  color: rgba(200, 225, 255, 0.5);
+}
+
+/* Dropdown must be dark in dark shell */
+.search-shell .search-dropdown-pro {
+  background: rgba(7, 17, 33, 0.97);
+  border-color: rgba(120, 193, 255, 0.2);
+  box-shadow: 0 24px 64px rgba(4, 12, 26, 0.6);
+}
+.search-shell .search-results-header {
+  border-bottom-color: rgba(120, 193, 255, 0.12);
+}
+.search-shell .search-results-count {
+  color: rgba(180, 215, 255, 0.65);
+}
+.search-shell .search-results-hints,
+.search-shell .search-results-hints span {
+  color: rgba(180, 215, 255, 0.5);
+}
+.search-shell .search-results-hints kbd {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(120, 193, 255, 0.18);
+  color: rgba(200, 230, 255, 0.55);
+}
+.search-shell .search-suggestion {
+  color: #e8f3ff;
+}
+.search-shell .search-suggestion:hover,
+.search-shell .search-suggestion-active {
+  background: rgba(74, 180, 255, 0.1);
+}
+.search-shell .search-suggestion-name {
+  color: rgba(210, 230, 255, 0.8);
+}
+.search-shell .search-empty-state {
+  color: rgba(180, 210, 255, 0.6);
+}
+.search-shell .search-empty-state .search-empty-icon {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(180, 210, 255, 0.55);
+}
+
+/* Quick chips in dark shell */
+.search-shell .search-quick-chips {
+  margin-top: 10px;
+}
+.search-shell .search-quick-chip {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(129, 197, 255, 0.18);
+  color: rgba(200, 230, 255, 0.8);
+}
+.search-shell .search-quick-chip:hover {
+  background: rgba(74, 180, 255, 0.15);
+  color: #c0e0ff;
+}
+.search-shell .search-quick-label {
+  color: rgba(180, 210, 255, 0.5);
 }
 
 .search-shell .search-icon {

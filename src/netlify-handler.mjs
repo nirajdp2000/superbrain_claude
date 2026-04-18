@@ -403,13 +403,41 @@ export async function handleNetlifyRequest(request) {
     }
 
     if (request.method === "GET" && pathname === "/api/dashboard") {
-      const dashboard = await buildDashboard({
-        symbols: searchParams.get("symbols") || "",
-        strategy: searchParams.get("strategy") || "swing",
-        horizonDays: searchParams.get("horizonDays") || undefined,
-        strictVerification: searchParams.get("strictVerification") || undefined,
+      // Cap symbols to 6 to stay within Netlify's 26-second function limit.
+      const rawSymbols = (searchParams.get("symbols") || "")
+        .split(",").map((s) => s.trim()).filter(Boolean).slice(0, 6).join(",");
+      const DASHBOARD_TIMEOUT_MS = 24_000;
+      let timedOut = false;
+      const timeoutHandle = { id: null };
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutHandle.id = setTimeout(() => {
+          timedOut = true;
+          reject(new Error("Dashboard analysis timed out — try fewer symbols or refresh."));
+        }, DASHBOARD_TIMEOUT_MS);
       });
-      return withCors(request, jsonResponse(dashboard));
+      try {
+        const dashboard = await Promise.race([
+          buildDashboard({
+            symbols: rawSymbols,
+            strategy: searchParams.get("strategy") || "swing",
+            horizonDays: searchParams.get("horizonDays") || undefined,
+            strictVerification: searchParams.get("strictVerification") || undefined,
+          }),
+          timeoutPromise,
+        ]);
+        clearTimeout(timeoutHandle.id);
+        return withCors(request, jsonResponse(dashboard));
+      } catch (dashErr) {
+        clearTimeout(timeoutHandle.id);
+        if (timedOut) {
+          return withCors(request, jsonResponse({
+            error: dashErr.message,
+            timedOut: true,
+            generatedAt: new Date().toISOString(),
+          }, 504));
+        }
+        throw dashErr;
+      }
     }
 
     if (request.method === "POST" && pathname === "/api/analyze") {

@@ -2378,17 +2378,26 @@ export default function App() {
     setDashLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams({ symbols: symbolsInput, strategy });
+      // Cap to 6 symbols client-side to match the server limit.
+      const cappedSymbols = symbolsInput
+        .split(",").map((s) => s.trim()).filter(Boolean).slice(0, 6).join(",");
+      const params = new URLSearchParams({ symbols: cappedSymbols, strategy });
       if (horizon) {
         params.set("horizonDays", horizon);
       }
       const nextDashboard = await apiFetch(`/api/dashboard?${params.toString()}`);
+      if (nextDashboard?.timedOut) {
+        setError("Dashboard timed out — showing partial results. Try fewer symbols.");
+      }
       setDashboard(nextDashboard);
       if (!preserve) {
         setAnalysisResult(null);
       }
     } catch (nextError) {
-      setError(nextError.message || "Dashboard load failed.");
+      const msg = nextError.message || "Dashboard load failed.";
+      setError(msg.includes("504") || msg.includes("timed out")
+        ? "Analysis timed out. Reduce the symbol list to 4–5 stocks and try again."
+        : msg);
     } finally {
       setDashLoading(false);
     }
