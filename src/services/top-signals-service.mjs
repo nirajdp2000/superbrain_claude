@@ -1,6 +1,7 @@
 import { analyzeMarket } from "./analysis-service.mjs";
 import { getQuotes } from "./market-service.mjs";
 import { getBroadEquityUniverse } from "./broad-universe-service.mjs";
+import { config } from "../config.mjs";
 
 function clamp(value, min = 0, max = 100) {
   return Math.max(min, Math.min(max, value));
@@ -14,7 +15,9 @@ class TopSignalsService {
   constructor() {
     this.cache = new Map();
     this.cacheTimeout = 3 * 60 * 1000;
-    this.deepDivePerSide = 40;
+    // On Netlify (26 s hard limit) we can only deep-dive a small shortlist.
+    // Locally or on a long-running server we can afford the full 40 per side.
+    this.deepDivePerSide = config.isNetlifyRuntime ? 5 : 40;
   }
 
   mapTimeframeToStrategy(timeframe = "swing") {
@@ -453,17 +456,49 @@ class TopSignalsService {
       }));
   }
 
+  // ── Netlify Blobs persistence (survives cold starts) ─────────────────────
+  async _blobGet(key) {
+    if (!config.isNetlifyRuntime) return null;
+    try {
+      const { getStore } = await import("@netlify/blobs");
+      const store = getStore({ name: "superbrain-signals", consistency: "strong" });
+      const raw = await store.get(key, { type: "json" });
+      if (!raw?._expiresAt || Date.now() > raw._expiresAt) return null;
+      return raw.data;
+    } catch { return null; }
+  }
+
+  async _blobSet(key, data, ttlMs = 5 * 60_000) {
+    if (!config.isNetlifyRuntime) return;
+    try {
+      const { getStore } = await import("@netlify/blobs");
+      const store = getStore({ name: "superbrain-signals", consistency: "strong" });
+      await store.set(key, JSON.stringify({ data, _expiresAt: Date.now() + ttlMs }));
+    } catch { /* non-critical */ }
+  }
+
   async runScan(strategy = "swing") {
     const cacheKey = `scan:${strategy}`;
-    const cached = this.cache.get(cacheKey);
 
-    if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
-      return cached.data;
+    // 1. In-process cache (warm between requests on the same instance)
+    const memCached = this.cache.get(cacheKey);
+    if (memCached && Date.now() - memCached.timestamp < this.cacheTimeout) {
+      return memCached.data;
+    }
+
+    // 2. Blob cache (survives Netlify cold starts)
+    const blobCached = await this._blobGet(cacheKey);
+    if (blobCached) {
+      this.cache.set(cacheKey, { data: blobCached, timestamp: Date.now() });
+      return blobCached;
     }
 
     const broadUniverse = await this.getScanUniverse();
     const quotes = await getQuotes(broadUniverse);
-    const minimumCoverage = Math.min(250, Math.max(25, Math.round(broadUniverse.length * 0.02)));
+    // On Netlify, a partial quote sweep is still useful — lower the minimum.
+    const minimumCoverage = config.isNetlifyRuntime
+      ? Math.max(10, Math.round(broadUniverse.length * 0.005)) // 0.5%
+      : Math.min(250, Math.max(25, Math.round(broadUniverse.length * 0.02)));
 
     if (quotes.length < minimumCoverage) {
       throw new Error("Broad market quote sweep is unavailable. Reconnect Upstox to restore 5000+ stock scanning.");
@@ -496,6 +531,8 @@ class TopSignalsService {
     };
 
     this.cache.set(cacheKey, { data, timestamp: Date.now() });
+    // Persist to Blobs async — don't block the response.
+    this._blobSet(cacheKey, data).catch(() => {});
     return data;
   }
 

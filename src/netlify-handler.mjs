@@ -399,11 +399,28 @@ export async function handleNetlifyRequest(request) {
     }
 
     if (request.method === "GET" && pathname === "/api/v2/market-signals") {
+      // Hard 18 s timeout — the scan is the heaviest endpoint. Returns 200 with
+      // an empty-but-valid overview on timeout so the UI shows "warming up"
+      // rather than erroring with "Signal scan is temporarily unavailable."
       try {
-        const overview = await topSignalsService.getMarketOverview();
+        const overview = await Promise.race([
+          topSignalsService.getMarketOverview(),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("scan_timeout")), 18_000)),
+        ]);
         return withCors(request, jsonResponse(overview));
       } catch (error) {
-        return withCors(request, jsonResponse({ error: error.message }, 500));
+        const isTimeout = error.message === "scan_timeout";
+        console.warn("[market-signals]", error.message);
+        // 200 so the frontend renders the empty state rather than erroring
+        return withCors(request, jsonResponse({
+          totalStocks: 0, totalAnalyzed: 0,
+          bullishCount: 0, bearishCount: 0, neutralCount: 0,
+          averageScore: 0,
+          marketSentiment: isTimeout ? "warming_up" : "unavailable",
+          lastUpdated: new Date().toISOString(),
+          _warming: isTimeout,
+          error: isTimeout ? null : error.message,
+        }, 200));
       }
     }
 
@@ -415,23 +432,32 @@ export async function handleNetlifyRequest(request) {
       if (!["bullish", "bearish"].includes(type)) {
         return withCors(request, jsonResponse({ error: "Type must be 'bullish' or 'bearish'" }, 400));
       }
-
       if (!["intraday", "swing", "short_term", "long_term"].includes(timeframe)) {
         return withCors(request, jsonResponse({ error: "Invalid timeframe" }, 400));
       }
-
       if (limit < 1 || limit > 50) {
         return withCors(request, jsonResponse({ error: "Limit must be between 1 and 50" }, 400));
       }
 
       try {
-        const result = type === "bullish"
-          ? await topSignalsService.getTopBullishStocks(timeframe, limit)
-          : await topSignalsService.getTopBearishStocks(timeframe, limit);
-
+        const result = await Promise.race([
+          type === "bullish"
+            ? topSignalsService.getTopBullishStocks(timeframe, limit)
+            : topSignalsService.getTopBearishStocks(timeframe, limit),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("scan_timeout")), 18_000)),
+        ]);
         return withCors(request, jsonResponse(result));
       } catch (error) {
-        return withCors(request, jsonResponse({ error: error.message }, 500));
+        const isTimeout = error.message === "scan_timeout";
+        console.warn("[top-signals]", error.message);
+        // 200 + empty list so the frontend renders "warming up" empty state
+        return withCors(request, jsonResponse({
+          stocks: [], timeframe, totalAnalyzed: 0,
+          [`${type}Found`]: 0, averageScore: 0,
+          lastUpdated: new Date().toISOString(),
+          _warming: isTimeout,
+          error: isTimeout ? null : error.message,
+        }, 200));
       }
     }
 
