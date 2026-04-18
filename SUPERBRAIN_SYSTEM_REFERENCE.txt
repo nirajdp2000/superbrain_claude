@@ -1,0 +1,1179 @@
+SUPERBRAIN SYSTEM REFERENCE
+Generated from live code inspection on 2026-04-11
+Project root: D:\Superbrain\superbrain_ai-superbrain_ai\superbrain_ai-superbrain_ai
+
+======================================================================
+1. WHAT THIS APP REALLY IS
+======================================================================
+
+Superbrain India is a Node.js HTTP server plus a React frontend.
+
+The server entry point is:
+- src/server.mjs
+
+The frontend is built by Vite from:
+- frontend/
+
+The built frontend is served from:
+- public/
+
+There are 2 different analysis stacks in this codebase:
+
+1. Primary live analysis stack
+- Used by /api/analyze, /api/ask, /api/intelligence, /api/dashboard, /api/news, /api/macro
+- Main modules:
+  - src/services/analysis-service.mjs
+  - src/services/market-service.mjs
+  - src/services/news-service.mjs
+  - src/services/universe-service.mjs
+  - src/services/top-signals-service.mjs
+- This is the main engine the current UI relies on.
+
+2. Secondary /api/v2 stack
+- Used by /api/v2/* routes
+- Main modules:
+  - src/services/trading-analysis-engine.mjs
+  - src/services/flexible-search-engine.mjs
+  - src/services/advanced-universe-service.mjs
+- Important: parts of this stack still use heuristic or mock-style data/scoring. Do not describe it as equal in fidelity to the primary live analysis engine.
+
+======================================================================
+2. PRIMARY ENDPOINTS AND WHAT THEY DO
+======================================================================
+
+/api/health
+- Returns service health, default watchlist, and Upstox connection status.
+
+/api/universe
+- Searches the stock universe.
+
+/api/analyze
+- Runs the main multi-stock analysis engine for one strategy and returns ranked rows.
+
+/api/intelligence
+- Runs the main engine for one stock and one strategy, then enriches it with deep reasoning and execution gating.
+
+/api/dashboard
+- Builds the homepage/dashboard response using the main engine plus market-wide opportunity scan.
+
+/api/ask
+- Maps a natural-language query to a stock and strategy.
+- By default it returns all strategy views for that stock, not just one horizon.
+
+/api/news
+- Returns either symbol-specific news or the full macro/news bundle.
+
+/api/macro
+- Returns market context plus macro and geopolitical headlines.
+
+/api/v2/*
+- Separate exploratory engine for flexible search, stock analysis, prediction-style output, and market-signal scans.
+- Use with caution because some of these modules are still partially mock-based.
+
+======================================================================
+3. HIGH-LEVEL FLOW OF THE PRIMARY ENGINE
+======================================================================
+
+For the main engine, the core request flow is:
+
+1. Resolve symbols/stocks
+- The engine resolves each requested stock using local universe data first, then remote search fallbacks.
+
+2. Fetch shared context in parallel
+- Market context
+- Company and symbol news
+- Macro/geopolitical/news bundle
+
+3. Resolve each stock bundle in parallel
+- Quote
+- Daily candles
+- Fundamentals
+
+4. Build a technical snapshot
+- Price structure
+- Momentum
+- Volatility
+- Moving averages
+- MACD
+- RSI
+- VWAP
+- Support/resistance
+- Higher-timeframe trend
+- Regime
+- Candlestick analysis
+
+5. Score the stock for the selected strategy
+- Technical score
+- Fundamental score
+- Company-news score
+- Macro score
+- Event-exposure score
+- Risk score
+- Confidence score
+
+6. Classify the verdict
+- STRONG_BUY
+- BUY
+- HOLD
+- SELL
+- STRONG_SELL
+
+7. Build execution-aware output
+- Targets and stop
+- Catalysts and risks
+- Candlestick explanation
+- Conflict detection
+- Data-coverage gaps
+- Trade validity gate
+- Execution plan
+- Self-critique
+
+======================================================================
+4. SYMBOL RESOLUTION AND SEARCH ALGORITHMS
+======================================================================
+
+Primary symbol resolution lives in:
+- src/services/universe-service.mjs
+- src/data/universe.mjs
+
+Local universe:
+- src/data/universe.mjs contains the built-in stock universe and default watchlist.
+- Default watchlist:
+  RELIANCE, TCS, HDFCBANK, ICICIBANK, INFY, HINDUNILVR, SBIN, BHARTIARTL, KOTAKBANK, LT, SUNPHARMA, MARUTI
+
+Resolution order in resolveStockAny():
+1. Exact symbol match from local universe
+2. Alias match from local alias index
+3. Local fuzzy search from searchUniverse()
+4. In-memory cache
+5. Remote universe search
+
+Universe search sources in searchAnyUniverse():
+1. Local search from src/data/universe.mjs
+2. Shared universe search if SUPERBRAIN_UPSTOX_PROXY_URL is configured
+   - Endpoint: <proxy>/api/stocks/search
+3. Yahoo public search
+   - https://query2.finance.yahoo.com/v1/finance/search
+
+Remote search merge behavior:
+- Local and remote results are merged and de-duplicated by symbol.
+- Final ranking uses exact match, prefix match, alias match, contains match, and multi-word match scoring.
+
+Advanced search endpoints:
+- /api/search/semantic
+- /api/search/fuzzy
+- /api/search/suggestions
+
+These are powered by src/services/advanced-universe-service.mjs and add:
+- Levenshtein typo tolerance
+- Jaccard token similarity
+- Phonetic matching
+- Acronym matching
+- Popular-stock boost
+- Sector diversity control
+
+======================================================================
+5. DATA FETCHING STACK IN THE PRIMARY ENGINE
+======================================================================
+
+Main stock bundle builder:
+- src/services/market-service.mjs
+- resolveStockBundle(symbolOrStock)
+
+resolveStockBundle() fetches in parallel:
+1. Quote
+2. Daily candles
+3. Fundamentals
+
+----------------------------------------------------------------------
+5A. Quote fetching
+----------------------------------------------------------------------
+
+Main function:
+- getQuotes(stocks)
+
+Quote source order:
+1. Check Upstox status via getUpstoxStatus()
+2. If connected, fetch live quotes from Upstox first
+3. For any stock not covered by the live map, fall back to Yahoo quote fetch
+4. Exception: if the quote request is a large sweep (> 250 stocks), Yahoo fallback is skipped
+
+Upstox quote details:
+- Source module: src/services/upstox-service.mjs
+- fetchUpstoxQuotes(stocks)
+- Batch size: 120 instrument keys
+- Batch concurrency: 6
+- Quote source labels:
+  - UPSTOX_LIVE
+  - UPSTOX_LIVE_SHARED
+
+Yahoo quote fallback:
+- Based on Yahoo chart metadata, not Level 2/live exchange feed
+- Uses fetchYahooChart(symbol, "5d", "1d")
+- Quote source label:
+  - YAHOO_DELAYED
+
+Important quote caveat:
+- Intraday decisions are explicitly penalized or blocked when the quote is not live Upstox data.
+
+----------------------------------------------------------------------
+5B. Daily candle fetching
+----------------------------------------------------------------------
+
+Main function:
+- getDailyCandles(symbol)
+
+Source:
+- Yahoo chart API
+- Range: 6 months
+- Interval: 1 day
+
+This means the main candlestick engine currently works on daily candles, not intraday candles.
+
+----------------------------------------------------------------------
+5C. Fundamentals fetching
+----------------------------------------------------------------------
+
+Main function:
+- getFundamentals(symbolOrStock)
+
+Fields extracted:
+- pe
+- roe
+- roce
+- debtToEquity
+- promoterHolding
+- salesGrowth3yr
+- profitGrowth3yr
+- dividendYield
+
+Fundamental source order:
+1. Screener public profile pages
+2. If Screener fails or is incomplete:
+   - Moneycontrol public profile parsing
+   - NSE public quote-equity API
+3. Successful fallback payloads are merged field by field
+
+Screener logic:
+- Tries multiple symbol/name variants
+- Parses ratio cards and growth tables from HTML
+- Source label:
+  - SCREENER_PUBLIC
+
+Moneycontrol logic:
+- Uses Moneycontrol autosuggestion first to find the best profile page
+- Parses annual graph and page HTML
+- Source label:
+  - MONEYCONTROL_PUBLIC
+
+NSE logic:
+- Calls https://www.nseindia.com/api/quote-equity
+- Primarily used for P/E fallback
+- Source label:
+  - NSE_PUBLIC
+
+Unavailable fundamentals:
+- If all public sources fail, the engine still returns a shaped payload with source = UNAVAILABLE and a reason string.
+
+----------------------------------------------------------------------
+5D. Market context fetching
+----------------------------------------------------------------------
+
+Main function:
+- getMarketContext()
+
+Sources:
+- Yahoo instruments:
+  - ^NSEI   -> Nifty 50
+  - ^BSESN  -> Sensex
+  - INR=X   -> USDINR
+  - BZ=F    -> Brent
+  - GC=F    -> Gold
+- NSE FII/DII flow:
+  - https://archives.nseindia.com/content/fo/fii_stats.json
+
+Risk-on calculation:
+- Average equity benchmark change (Nifty + Sensex)
+- Minus positive USDINR shock * 0.8
+- Minus positive Brent shock * 0.5
+
+Regime from riskOnScore:
+- >= 0.8  -> RISK_ON
+- <= -0.8 -> RISK_OFF
+- else    -> BALANCED
+
+----------------------------------------------------------------------
+5E. News fetching
+----------------------------------------------------------------------
+
+Main module:
+- src/services/news-service.mjs
+
+Global RSS sources:
+- Economic Times Markets
+- Moneycontrol
+- LiveMint Markets
+- LiveMint Companies
+- LiveMint Politics
+- Business Standard Markets
+- Financial Express Markets
+- RBI Press Releases
+- SEBI Updates
+- PIB Economy
+- NSE Corporate Announcements
+- BSE Corporate Announcements
+
+Company-targeted source:
+- Google News RSS search
+- Endpoint:
+  https://news.google.com/rss/search
+
+News windows:
+- Global/news bundle cache TTL: 5 minutes
+- Max item age: 10 days
+- Company-targeted window constant: 7 days
+
+News pipeline:
+1. Fetch RSS/XML feeds
+2. Parse headline, description, link, publication time
+3. Classify tags
+4. Infer sentiment
+5. Map symbols from text
+6. Compute freshness score
+7. Mark official, macro, geopolitical, and company-specific flags
+8. De-duplicate and cross-verify by normalized headline key
+
+Verification rule:
+- A headline is marked verified if the same normalized headline cluster appears across at least 2 sources.
+
+Bundle groups returned by getNewsIntelligence():
+- items
+- official
+- macro
+- geopolitical
+- eventRadar
+
+======================================================================
+6. TECHNICAL SNAPSHOT ALGORITHM
+======================================================================
+
+Main function:
+- computeTechnicalSnapshot(candles, quote)
+
+Required minimum history:
+- If latest price is missing or daily candles < 30, the technical snapshot returns neutral/fallback values.
+
+Indicators calculated:
+- sma20
+- sma50
+- return20d
+- return60d
+- nearHighRatio (vs 120-day high)
+- drawdown (vs rolling peak)
+- volumeSurge (latest volume vs 20-day average)
+- rsi14
+- macd
+- vwap20
+- support20
+- resistance20
+- support60
+- resistance60
+- higherTimeframe
+- regime
+- candlestick
+
+Technical score starting point:
+- Base score = 50
+
+Technical score adjustments:
+- +10 if price > sma20
+- +10 if sma20 > sma50
+- +10 if return20d > 4
+- +8  if return60d > 10
+- +8  if nearHighRatio > 0.92
+- +6  if volumeSurge > 1.25
+- +6  if RSI is between 54 and 72
+- -6  if RSI < 40
+- +5  if MACD histogram > 0
+- -5  if MACD histogram < 0
+- +4  if price > vwap20
+- -4  if price < vwap20
+- -10 if drawdown > 18
+- -6  if volatility > 3.2
+- -10 if return20d < -5
+
+Technical trendBias from final technical score:
+- >= 62 -> BULLISH
+- <= 42 -> BEARISH
+- else  -> NEUTRAL
+
+Higher timeframe logic:
+- Daily candles are aggregated into 5-day buckets to approximate weekly candles
+- Last 26 weekly buckets are used
+- Higher timeframe trend is bullish when:
+  - price > weekly sma4
+  - weekly sma4 > weekly sma8
+  - 4-week return > 0
+- Higher timeframe trend is bearish when the inverse is true
+
+Regime classification:
+- HIGH_VOLATILITY if volatility >= 3.8
+- TRENDING if:
+  - directional strength >= 6
+  - trend spread pct >= 2.2
+  - 20-day range width pct >= 6
+- SIDEWAYS if:
+  - 20-day range width pct <= 8
+  - abs(return20d) <= 4.5
+  - abs(return60d) <= 10
+- Else TRANSITIONAL
+
+Trend state inside regime:
+- UPTREND
+- DOWNTREND
+- RANGE
+
+======================================================================
+7. CANDLESTICK ANALYSIS ENGINE
+======================================================================
+
+Main builder:
+- buildCandlestickSnapshot()
+
+Pattern timeframe:
+- daily
+
+Trend confirmation timeframe:
+- weekly when higher timeframe data is available
+- otherwise daily fallback text is used
+
+Detected patterns currently include:
+- Bullish Engulfing
+- Bearish Engulfing
+- Hammer
+- Shooting Star
+- Doji
+- Morning Star
+- Evening Star
+- Bullish Harami
+- Bearish Harami
+- Piercing Line
+- Dark Cloud Cover
+- Tweezer Bottom
+- Tweezer Top
+- Three White Soldiers
+- Three Black Crows
+- Bullish Marubozu
+- Bearish Marubozu
+- Inside Bar Coil
+- Strong Bullish Momentum Candle
+- Strong Bearish Momentum Candle
+
+Candlestick context layers:
+- Trend context from sma20/sma50/returns
+- Market structure:
+  - HIGHER_HIGHS_HIGHER_LOWS
+  - LOWER_HIGHS_LOWER_LOWS
+  - RANGE_COMPRESSION
+  - MIXED
+- Price location:
+  - BREAKOUT_ZONE
+  - BREAKDOWN_ZONE
+  - SUPPORT_ZONE
+  - RESISTANCE_ZONE
+  - NOISE_ZONE
+- Volume confirmation
+- Trap detection:
+  - Fake breakout
+  - Fake breakdown
+- Weekly trend bias
+- MACD posture
+- RSI context
+- Regime label
+
+Candlestick scoring:
+- Each candidate starts with its own reliability score.
+- The score is then adjusted by confluence:
+  - alignment with prevailing trend
+  - reversal location or continuation location
+  - market structure
+  - trap confirmation
+  - weekly trend agreement/conflict
+  - MACD posture
+  - RSI position
+  - regime suitability
+  - volume surge
+  - penalty for noise-zone patterns
+
+Candlestick quality tiers:
+- score >= 7.6 -> Ultra
+- score >= 5.8 -> High
+- score >= 3.8 -> Moderate
+- else         -> Weak
+
+Candlestick validity:
+- Weak patterns are marked Ignore
+- Stronger patterns can still be downgraded later if they do not align with the system verdict/context
+
+Trade trigger output:
+- The engine also generates a trigger sentence, not just the pattern name.
+- Example logic:
+  - bullish reversal near support -> wait for follow-through above signal high with risk below signal low
+  - bearish reversal near resistance -> inverse logic
+
+Current candlestick limitation:
+- The engine is good for daily pattern context, but it is not an intraday candle engine.
+
+======================================================================
+8. NEWS, EVENT, AND MACRO SCORING
+======================================================================
+
+----------------------------------------------------------------------
+8A. Company-news scoring
+----------------------------------------------------------------------
+
+Main summarizer:
+- summarizeSymbolNews(symbol, items)
+
+Base score:
+- Starts at 50
+
+For up to the top 8 relevant symbol headlines:
+- weight = freshnessScore * credibility * verified multiplier * official multiplier
+- score increment = (sentiment.score * 18 + tagBias) * weight
+
+Additional outputs:
+- verifiedCount
+- officialCount
+- newsCount
+- companySpecificCount
+- highCredibilityCount
+- realTimeCount
+- avgCredibility
+- latestPublishedAt
+- signalBalance
+- freshnessScore
+- dominantTags
+- sourceCoverage
+- bullishHeadlines
+- bearishHeadlines
+
+Evidence grade rules:
+- A if:
+  - official >= 1 and realTime >= 1
+  - or verified >= 2 and avgCredibility >= 0.9
+- B if:
+  - verified >= 1 and highCredibility >= 2
+  - or realTime >= 2 and avgCredibility >= 0.88
+- C if:
+  - newsCount >= 1 and avgCredibility >= 0.82
+- D otherwise
+
+----------------------------------------------------------------------
+8B. Event-exposure scoring
+----------------------------------------------------------------------
+
+Main function:
+- buildEventExposure(stock, globalNews)
+
+Base score:
+- Starts at 50
+
+Inputs:
+- macro headlines
+- geopolitical headlines
+- official headlines
+
+Logic:
+- De-duplicate by item id
+- Evaluate up to 40 items
+- Translate each tag into sector-specific impact using EVENT_IMPACT_RULES
+- If no tag impact exists, fallback to sentiment-based impact
+- Weight impact by:
+  - freshness
+  - credibility
+  - verification
+  - official-source bonus
+
+Event-exposure output:
+- score
+- pressure:
+  - TAILWIND
+  - MIXED
+  - HEADWIND
+- drivers list
+
+----------------------------------------------------------------------
+8C. Macro scoring
+----------------------------------------------------------------------
+
+Main function:
+- computeMacroScore(stock, marketContext)
+
+Base score:
+- Starts at 52
+
+Adjustments:
+- Risk-on score boosts or cuts
+- FII net flow boosts or cuts
+- Sector-sensitive Brent impact
+- Sector-sensitive USDINR impact
+- Gold risk-aversion penalty in risk-off conditions
+
+======================================================================
+9. FUNDAMENTAL SCORING
+======================================================================
+
+Main function:
+- computeFundamentalScore(stock, fundamentals)
+
+Base score:
+- Starts at 50
+
+Adjustments:
+- P/E relative to sector fair range
+- ROE
+- ROCE
+- Debt to equity
+- Promoter holding
+- 3-year profit growth
+- 3-year sales growth
+
+Sector fair P/E benchmarks are hard-coded for:
+- Technology
+- Financials
+- Healthcare
+- Consumer
+- Industrials
+- Auto
+- Materials
+- Energy
+- Utilities
+- Telecom
+
+======================================================================
+10. STRATEGIES, HORIZONS, AND WEIGHTS
+======================================================================
+
+Strategies are defined in src/services/analysis-service.mjs.
+
+Strategy order:
+- intraday
+- swing
+- position
+- longterm
+
+Displayed labels:
+- intraday  -> Intraday
+- swing     -> Swing
+- position  -> Short Term
+- longterm  -> Long Term
+
+Resolved default horizons:
+- intraday  -> 1 day
+- swing     -> 20 days
+- position  -> 60 days
+- longterm  -> 240 days
+
+Strategy weights:
+
+intraday
+- technical:    0.50
+- fundamentals: 0.08
+- news:         0.16
+- macro:        0.14
+- events:       0.12
+- riskPenalty:  0.20
+
+swing
+- technical:    0.36
+- fundamentals: 0.23
+- news:         0.18
+- macro:        0.13
+- events:       0.10
+- riskPenalty:  0.18
+
+position
+- technical:    0.25
+- fundamentals: 0.32
+- news:         0.17
+- macro:        0.14
+- events:       0.12
+- riskPenalty:  0.16
+
+longterm
+- technical:    0.14
+- fundamentals: 0.40
+- news:         0.16
+- macro:        0.16
+- events:       0.14
+- riskPenalty:  0.12
+
+Main combined score formula:
+- totalScore =
+  technicalScore   * technicalWeight
+  + fundamentalScore * fundamentalsWeight
+  + newsScore      * newsWeight
+  + macroScore     * macroWeight
+  + eventExposure  * eventsWeight
+
+Adjusted score formula:
+- adjustedScore = totalScore - riskScore * riskPenaltyWeight
+
+======================================================================
+11. RISK SCORE, CONFIDENCE SCORE, VERDICT, TARGETS
+======================================================================
+
+----------------------------------------------------------------------
+11A. Risk score
+----------------------------------------------------------------------
+
+Main function:
+- computeRiskScore()
+
+Base risk:
+- Starts at 28
+
+Risk add-ons:
+- Higher volatility
+- Larger drawdown
+- High debt/equity
+- Low promoter holding
+- Risk-off market context
+- Weak event exposure
+- Strict-verification penalty when news exists but no verification
+- No real-time news penalty
+- Low average credibility penalty
+- Evidence grade D penalty
+- Negative signal balance penalty
+
+----------------------------------------------------------------------
+11B. Confidence score
+----------------------------------------------------------------------
+
+Main function:
+- summarizeConfidence()
+
+Base confidence:
+- Starts at 42
+
+Confidence boosts:
+- Live Upstox quote source
+- Yahoo delayed source gets smaller boost
+- Fundamental-source quality bonus
+- Verified headline count
+- Official headline count
+- High-credibility headline count
+- Real-time headline count
+- Freshness score
+- Event-driver depth
+- Evidence grade A/B bonus
+
+Confidence penalties:
+- Strict verification with unverified active news
+- Evidence grade D with active news
+- Data-coverage penalties are subtracted later
+
+Final confidence is clamped to:
+- 18 to 95 after coverage penalty
+
+----------------------------------------------------------------------
+11C. Verdict rules
+----------------------------------------------------------------------
+
+Main function:
+- classifyVerdict(adjustedScore, riskScore, newsSummary, eventExposure, strictVerification)
+
+Verdict thresholds:
+- STRONG_BUY if:
+  - adjustedScore >= 78
+  - riskScore <= 48
+  - eventExposure.score >= 52
+
+- BUY if:
+  - adjustedScore >= 64
+  - riskScore <= 62
+
+- HOLD if:
+  - strictVerification is on
+  - news exists
+  - verifiedCount == 0
+  - adjustedScore >= 56
+
+- HOLD if:
+  - adjustedScore >= 46
+
+- SELL if:
+  - adjustedScore >= 30
+  - or riskScore >= 60
+  - or eventExposure.score <= 42
+
+- STRONG_SELL otherwise
+
+----------------------------------------------------------------------
+11D. Target and stop logic
+----------------------------------------------------------------------
+
+Main function:
+- buildTargets(score, riskScore, price, strategy, verdict)
+
+Core formula:
+- targetPct = clamp((score - 50) * targetMultiplier - riskScore * 0.035, minTarget, maxTarget)
+- stopPct   = clamp(stopBase + riskScore * stopRiskFactor, minStop, maxStop)
+
+Strategy target presets:
+
+intraday
+- targetMultiplier = 0.11
+- stopBase = 1.8
+- stopRiskFactor = 0.04
+- target clamp = -3 to 4
+- stop clamp = 1.5 to 4
+
+swing
+- targetMultiplier = 0.24
+- stopBase = 4.2
+- stopRiskFactor = 0.08
+- target clamp = -10 to 20
+- stop clamp = 4 to 11
+
+position
+- targetMultiplier = 0.38
+- stopBase = 6
+- stopRiskFactor = 0.08
+- target clamp = -10 to 20
+- stop clamp = 4 to 11
+
+longterm
+- targetMultiplier = 0.58
+- stopBase = 8.5
+- stopRiskFactor = 0.05
+- target clamp = -12 to 34
+- stop clamp = 7 to 16
+
+Bearish handling:
+- SELL and STRONG_SELL invert stop-loss placement to the other side of price.
+
+======================================================================
+12. TRADE VALIDITY GATE AND EXECUTION LOGIC
+======================================================================
+
+Important distinction:
+- A bullish or bearish verdict does not automatically mean "trade now".
+- The app has a stricter institutional-style gate in buildTradeDecision().
+
+The engine can still return:
+- action = NO_TRADE
+- status = WAIT - CONDITIONS NOT MET
+
+Trade gate requires:
+- Directional verdict is BUY/SELL class
+- Strong multi-factor confluence
+- Clear directional bias
+- No high-severity conflicts
+- Higher timeframe not in conflict
+- Market regime is not unfavorable
+- Current location versus key levels is acceptable
+- Entry timing is optimal or acceptable early
+- Signal clarity is not mixed
+- Enhancement-layer confluence passedChecks >= 4
+- Reward-to-risk >= 2
+- No blocking issues
+
+Blocking issues include:
+- Missing current price
+- Incomplete technical snapshot
+- Missing target/stop structure
+- Intraday without live Upstox quote
+
+Execution plan output includes:
+- entry type (market or limit)
+- entry price
+- stop loss
+- hard stop loss
+- invalidation level
+- target 1
+- target 2
+- position-sizing guidance
+- trailing stop guidance
+- exit plan
+
+======================================================================
+13. DATA COVERAGE AND KNOWN MISSING PIECES
+======================================================================
+
+The engine explicitly tracks missing data coverage.
+
+Known missing critical items hard-coded in the system:
+- Options OI is not integrated
+- PCR is not integrated
+- Max pain is not integrated
+- Strike concentration is not integrated
+
+Intraday-specific missing item:
+- True intraday VWAP and tape-based order flow are not integrated yet
+
+Other practical limitations:
+- Without Upstox, quotes can fall back to delayed Yahoo data
+- Large broad-universe quote sweeps depend on Upstox; Yahoo fallback is not used for > 250 names
+- Candlestick analysis is daily, not intraday
+- Higher-timeframe confirmation is approximate weekly data built from 5 daily candles
+
+======================================================================
+14. MARKET-WIDE TOP SIGNALS ENGINE
+======================================================================
+
+Main module:
+- src/services/top-signals-service.mjs
+
+Purpose:
+- Scan a broad universe and surface top bullish and bearish names
+
+Universe source:
+- src/services/broad-universe-service.mjs
+
+Broad-universe source order:
+1. Upstox BOD instrument dumps
+   - NSE.json.gz
+   - BSE.json.gz
+2. Disk cache:
+   - data/broad-equity-universe.json
+3. Local universe fallback if remote source fails
+
+Broad-universe filters:
+- Keeps only equity instruments
+- Excludes ETF, ETN, MF, bond-like instruments, rights-style records, and other non-standard listings
+
+Scan flow:
+1. Fetch broad universe
+2. Fetch quotes for whole universe
+3. Require minimum quote coverage:
+   - min(250, max(25, round(universe_size * 0.02)))
+4. Build quick ranks
+5. Build bullish and bearish shortlists
+6. Run deep analyzeMarket() only on shortlisted stocks
+7. Attach pre-scan metadata to deep-analysis results
+
+Pre-scan quickScore:
+- Uses changePct
+- open-to-current move
+- current position within day range
+- weights vary by strategy
+
+Additional shortlist filters:
+- tradeability score
+- turnover
+- liquidity floor
+- anti-exhaustion checks
+
+Important limitation:
+- If broad quote coverage is too low, the service throws:
+  "Broad market quote sweep is unavailable. Reconnect Upstox to restore 5000+ stock scanning."
+
+======================================================================
+15. NATURAL-LANGUAGE QUERY BEHAVIOR
+======================================================================
+
+Main function:
+- askSuperbrain(payload)
+
+Behavior:
+- Extracts strategy intent from the query text
+- Finds best-matching stock from natural language
+- If includeAllStrategies is not false, it returns all strategy views for the stock
+
+Strategy inference patterns:
+- intraday keywords:
+  intraday, day trade, scalp, today
+- swing keywords:
+  swing, swing trade
+- position keywords:
+  short term, position, positional, 3 month, 6 month, few weeks
+- longterm keywords:
+  long term, long run, 1 year, 2 year, portfolio, investment, accumulate, wealth
+
+Multi-strategy requests are triggered by phrases like:
+- all time frames
+- across all strategies
+- full analysis
+- complete breakdown
+- compare intraday vs swing vs long term
+
+======================================================================
+16. SECONDARY /API/V2 STACK: WHAT IS REAL VS WHAT IS MOCK
+======================================================================
+
+This section is important because another AI could otherwise overstate these modules.
+
+----------------------------------------------------------------------
+16A. advanced-universe-service.mjs
+----------------------------------------------------------------------
+
+Used for:
+- /api/search/semantic
+- /api/search/fuzzy
+- /api/search/suggestions
+
+This module is heuristic but real as a search layer.
+It uses:
+- Levenshtein distance
+- Jaccard similarity
+- phonetic similarity
+- acronym matching
+- popularity weights
+- query expansion
+- diversity control
+
+----------------------------------------------------------------------
+16B. flexible-search-engine.mjs
+----------------------------------------------------------------------
+
+Used for:
+- /api/v2/flexible-search
+- /api/v2/intent-search
+- /api/v2/timeframe-search
+- /api/v2/strategy-search
+
+Important accuracy warning:
+- This engine is not wired to the same live market-analysis stack as the primary engine.
+- It contains several mock or placeholder components.
+
+What it does:
+- Parses query intent for timeframe, strategy, risk, market condition, sector, price range, market cap, and indicator mentions
+- Applies timeframe-specific weight maps
+- Scores matches dynamically
+
+Timeframe weights in this module:
+
+intraday
+- momentum 0.30
+- volume 0.25
+- volatility 0.20
+- technical 0.15
+- news 0.10
+
+swing
+- trend 0.35
+- pattern 0.25
+- volume 0.20
+- technical 0.15
+- fundamentals 0.05
+
+short_term
+- fundamentals 0.40
+- trend 0.25
+- sector 0.15
+- institutional 0.10
+- technical 0.10
+
+long_term
+- fundamentals 0.50
+- management 0.20
+- competitive 0.15
+- sector 0.10
+- dividend 0.05
+
+Mock or placeholder behavior in this module:
+- calculateFundamentalScore() uses Math.random()
+- calculateCompetitiveScore() uses Math.random()
+- calculateGrowthScore() uses Math.random()
+- calculateDividendScore() uses Math.random()
+- enrichWithMarketData() fabricates market data with random values
+- matchesMarketCap() is mock
+- searchSharedUniverse() currently returns []
+
+Conclusion:
+- This module is suitable for exploratory filtering/search UX
+- It is not the same as the primary live trading-analysis engine
+
+----------------------------------------------------------------------
+16C. trading-analysis-engine.mjs
+----------------------------------------------------------------------
+
+Used for:
+- /api/v2/search-stock
+- /api/v2/analyze-stock
+- /api/v2/market-data
+- /api/v2/ai-prediction
+- /api/v2/market-sentiment
+
+Important accuracy warning:
+- This engine is also partly demo/mock.
+
+What is real:
+- It attempts Upstox historical-candle fetch first:
+  https://api.upstox.com/v2/historical-candle/{symbol}/1minute/2024-03-26
+
+What is mock:
+- If Upstox is unavailable, it generates mock market data
+- Technical indicators are mock-generated
+- Fundamentals are mock-generated
+- Sentiment is mock-generated
+- Headline lists are mock-generated
+
+Conclusion:
+- Do not present /api/v2 analysis as a fully live production-grade engine
+- The primary engine in analysis-service.mjs is the more trustworthy explanation of how the current app works
+
+======================================================================
+17. CACHE LAYERS
+======================================================================
+
+Important cache TTLs in the current code:
+
+market-service.mjs
+- quoteCache: 30 seconds
+- candleCache: 15 minutes
+- fundamentalsCache: 6 hours
+- contextCache: 5 minutes
+
+news-service.mjs
+- newsCache: 5 minutes
+
+universe-service.mjs
+- searchCache: 10 minutes
+- stockCache: 6 hours
+
+advanced-universe-service.mjs
+- searchCache: 10 minutes
+- stockCache: 6 hours
+- semanticCache: 30 minutes
+
+trading-analysis-engine.mjs
+- marketDataCache: 5 seconds
+- analysisCache: 5 minutes
+- sentimentCache: 30 minutes
+
+top-signals-service.mjs
+- internal scan cache: 3 minutes
+
+broad-universe-service.mjs
+- universe cache: 12 hours
+
+======================================================================
+18. SHORTEST ACCURATE SUMMARY FOR ANOTHER AI
+======================================================================
+
+If you need a compressed description, use this:
+
+Superbrain India is primarily a multi-factor Indian equities analysis engine built around analysis-service.mjs. For each stock it resolves a symbol, fetches quote + daily candles + fundamentals, builds a technical snapshot, summarizes company news, scores macro/event exposure, then combines everything with strategy-specific weights for intraday, swing, position, and longterm horizons. The main live quote source is Upstox, with Yahoo delayed fallback for smaller requests; daily candles come from Yahoo; fundamentals come from Screener first and then Moneycontrol/NSE fallback; macro context comes from Yahoo benchmark instruments plus NSE FII/DII data; company and macro news come from RSS feeds plus Google News RSS, with cross-source verification and evidence grading. The main engine also adds candlestick context on the daily chart with weekly trend confirmation, conflict detection, execution gating, and a no-trade state when confluence is not strong enough. Separate /api/v2 modules exist, but some of them still rely on mock or placeholder scoring/data and should not be described as the same fidelity as the primary analysis stack.
+
+======================================================================
+19. FILES TO READ FIRST IF ANOTHER AI NEEDS TO CONTINUE WORK
+======================================================================
+
+Read these first, in this order:
+
+1. src/server.mjs
+2. src/services/analysis-service.mjs
+3. src/services/market-service.mjs
+4. src/services/news-service.mjs
+5. src/services/universe-service.mjs
+6. src/services/top-signals-service.mjs
+7. src/services/broad-universe-service.mjs
+
+Read these separately only if the task is about /api/v2 or advanced search:
+
+8. src/services/advanced-universe-service.mjs
+9. src/services/flexible-search-engine.mjs
+10. src/services/trading-analysis-engine.mjs

@@ -1,0 +1,25 @@
+{
+  "name": "superbrain-india",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.mjs",
+    "start": "node src/server.mjs",
+    "ui:dev": "vite --config frontend/vite.config.mjs",
+    "ui:build": "vite build --config frontend/vite.config.mjs",
+    "build": "npm run ui:build"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.1",
+    "vite": "^8.0.2"
+  }
+}

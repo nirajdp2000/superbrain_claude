@@ -1,0 +1,16 @@
+[build]
+  command = "npm run build"
+  publish = "public"
+
+[build.environment]
+  SUPERBRAIN_PUBLIC_SITE_URL = "https://superbrainai.netlify.app"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+[dev]
+  command = "npm run ui:dev"
+  targetPort = 5173
+  port = 8888
+  autoLaunch = false
