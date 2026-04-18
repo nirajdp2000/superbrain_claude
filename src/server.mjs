@@ -178,6 +178,7 @@ function requestHandler() {
       deploymentMode: "local",
       siteOrigin,
       callbackUrl,
+      adminToken: config.adminToken,
     };
 
     try {

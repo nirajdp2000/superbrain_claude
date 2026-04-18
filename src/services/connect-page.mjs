@@ -8,7 +8,22 @@ const STYLES = `
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0a0a0b;color:#e4e4e7;font-family:system-ui,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
-.card{background:#18181b;border:1px solid rgba(255,255,255,0.07);border-radius:24px;padding:40px;max-width:520px;width:100%;box-shadow:0 32px 80px rgba(0,0,0,0.6)}
+.card{background:#18181b;border:1px solid rgba(255,255,255,0.07);border-radius:24px;padding:40px;max-width:560px;width:100%;box-shadow:0 32px 80px rgba(0,0,0,0.6)}
+.divider{display:flex;align-items:center;gap:12px;margin:20px 0;color:#3f3f46;font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase}
+.divider::before,.divider::after{content:"";flex:1;height:1px;background:rgba(255,255,255,0.06)}
+.token-box{background:#09090b;border:1px solid rgba(37,99,235,0.25);border-radius:14px;padding:20px;margin-bottom:20px}
+.token-box .section-label{margin-bottom:14px}
+.input-group{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.input-label{font-size:10px;font-weight:700;color:#71717a;text-transform:uppercase;letter-spacing:0.1em}
+.token-input{background:#18181b;border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:10px 14px;color:#e4e4e7;font-size:12px;font-family:monospace;width:100%;outline:none;transition:border-color 0.2s}
+.token-input:focus{border-color:rgba(37,99,235,0.6)}
+.token-input::placeholder{color:#3f3f46}
+.token-status{font-size:11px;margin-top:10px;min-height:16px;font-weight:600}
+.uri-box{background:#09090b;border:1px solid rgba(251,191,36,0.2);border-radius:12px;padding:14px 16px;margin-bottom:20px}
+.uri-label{font-size:9px;font-weight:700;color:#78716c;text-transform:uppercase;letter-spacing:0.15em;margin-bottom:8px}
+.uri-value{font-size:11px;font-family:monospace;color:#fbbf24;word-break:break-all;line-height:1.5}
+.copy-btn{margin-top:8px;background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.2);color:#fbbf24;border-radius:8px;padding:4px 12px;font-size:10px;font-weight:700;letter-spacing:0.05em;cursor:pointer;text-transform:uppercase}
+.copy-btn:hover{background:rgba(251,191,36,0.2)}
 .logo{display:flex;align-items:center;gap:12px;margin-bottom:32px}
 .logo-icon{width:40px;height:40px;background:linear-gradient(135deg,#2563eb,#0f766e);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px}
 .logo-text{font-size:18px;font-weight:800;letter-spacing:-0.5px}
@@ -68,17 +83,19 @@ function getConnectPageContext(options = {}) {
   const siteOrigin = String(options.siteOrigin || fallbackOrigin).replace(/\/+$/, "");
   const callbackUrl = escapeHtml(options.callbackUrl || `${siteOrigin}/api/upstox/callback`);
   const safeOrigin = escapeHtml(siteOrigin);
+  const adminToken = escapeHtml(options.adminToken || "superbrain-admin-2025");
 
   if (deploymentMode === "netlify") {
     return {
       callbackUrl,
+      adminToken,
       dashboardUrl: options.dashboardUrl || "/",
-      storageLabel: "Runtime cache",
+      storageLabel: "Netlify Blobs",
       connectedSubtitle: "Your account is active. Live market data is flowing through this Netlify deployment.",
-      connectedNote: "Tokens are cached inside the active Netlify runtime. After a redeploy or cold start, reconnect may be required unless a persistent token is supplied through environment variables.",
-      connectStepText: "Redirected back automatically and token cached inside the active Netlify runtime",
+      connectedNote: "Token is persisted in Netlify Blobs and auto-refreshes daily at 8:30 AM IST via scheduled function.",
+      connectStepText: "Redirected back automatically and token stored in Netlify Blobs",
       connectNote: `OAuth 2.0 secured. The Upstox redirect URI must exactly match ${callbackUrl}.`,
-      callbackStorageText: "Token cached in the active Netlify runtime",
+      callbackStorageText: "Token saved to Netlify Blobs (persists across deploys)",
       configSubtitle: `Upstox API credentials are not configured in this Netlify site's environment variables.`,
       configSectionLabel: "Add in Netlify environment variables",
       configLines: [
@@ -93,6 +110,7 @@ function getConnectPageContext(options = {}) {
 
   return {
     callbackUrl,
+    adminToken,
     dashboardUrl: options.dashboardUrl || "/",
     storageLabel: "JSON File",
     connectedSubtitle: "Your account is active. Live market data is flowing.",
@@ -146,35 +164,85 @@ export function renderConnectedPage(userInfo, options = {}) {
 export function renderConnectPage(authUrl, options = {}) {
   const context = getConnectPageContext(options);
 
-  return `<!DOCTYPE html><html><head><title>Connect Upstox - Superbrain</title>${STYLES}</head><body>
+  return `<!DOCTYPE html><html><head><title>Connect Upstox - Superbrain</title>${STYLES}
+<script>
+function copyUri() {
+  const uri = document.getElementById('redirect-uri').textContent;
+  navigator.clipboard.writeText(uri).then(() => {
+    const btn = document.getElementById('copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+  });
+}
+async function submitToken(e) {
+  e.preventDefault();
+  const at = document.getElementById('sb-access-token').value.trim();
+  const rt = document.getElementById('sb-refresh-token').value.trim();
+  const st = document.getElementById('token-status');
+  if (!at) { st.textContent = 'Access token is required.'; st.style.color='#f87171'; return; }
+  st.textContent = 'Saving\u2026'; st.style.color='#fbbf24';
+  try {
+    const body = { accessToken: at };
+    if (rt) body.refreshToken = rt;
+    const r = await fetch('/api/upstox/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-superbrain-admin': ${JSON.stringify(context.adminToken)} },
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (r.ok && d.ok) {
+      st.textContent = '\u2714 Token saved! Reloading\u2026'; st.style.color='#34d399';
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      st.textContent = d.error || 'Failed to save token.'; st.style.color='#f87171';
+    }
+  } catch(err) {
+    st.textContent = 'Error: ' + err.message; st.style.color='#f87171';
+  }
+}
+</script>
+</head><body>
 <div class="card">
   <div class="logo"><div class="logo-icon">SB</div><div><div class="logo-text">Superbrain</div><div class="logo-sub">India Intelligence</div></div></div>
   <div class="badge badge-red"><div class="dot dot-red"></div>Not Connected</div>
   <h1>Connect to Upstox</h1>
-  <p class="subtitle">Authorize once to unlock live market data.</p>
-  <div class="warn-box">
-    <div style="font-size:16px;flex-shrink:0">!</div>
-    <div class="warn-text"><strong>Currently using simulated data.</strong> Connect your Upstox account to switch to real-time live market feeds instantly.</div>
-  </div>
+  <p class="subtitle">Choose OAuth below, or paste your token directly — no redirect URI setup needed.</p>
+
+  <!-- Method 1: OAuth -->
   <div class="steps-box">
-    <div class="section-label">What happens next</div>
-    <div class="step"><div class="step-num">1</div><div class="step-text">Redirected to the Upstox login page</div></div>
-    <div class="step"><div class="step-num">2</div><div class="step-text">Login with your Upstox credentials</div></div>
-    <div class="step"><div class="step-num">3</div><div class="step-text">Authorize Superbrain to access market data</div></div>
-    <div class="step"><div class="step-num">4</div><div class="step-text">${context.connectStepText}</div></div>
-    <div class="step"><div class="step-num">5</div><div class="step-text">Live data activates instantly</div></div>
+    <div class="section-label">Method 1 &mdash; OAuth (requires redirect URI setup)</div>
+    <div class="step"><div class="step-num">1</div><div class="step-text">Open <a href="https://account.upstox.com/developer/apps" target="_blank" style="color:#93c5fd">Upstox Developer Apps</a> and add this exact redirect URI to your app:</div></div>
+    <div class="uri-box" style="margin:8px 0 8px 34px">
+      <div class="uri-label">Redirect URI to register in Upstox portal</div>
+      <div class="uri-value" id="redirect-uri">${context.callbackUrl}</div>
+      <button class="copy-btn" id="copy-btn" onclick="copyUri()">Copy</button>
+    </div>
+    <div class="step"><div class="step-num">2</div><div class="step-text">Then click the button below to authorize via Upstox login</div></div>
   </div>
-  <div class="benefits">
-    <div class="benefit"><div class="bdot"></div>Real-time quotes</div>
-    <div class="benefit"><div class="bdot"></div>Live price feed</div>
-    <div class="benefit"><div class="bdot"></div>Actual volume data</div>
-    <div class="benefit"><div class="bdot"></div>5000+ instruments</div>
-    <div class="benefit"><div class="bdot"></div>NSE + BSE coverage</div>
-    <div class="benefit"><div class="bdot"></div>Auto daily refresh</div>
+  <a href="${authUrl}" class="btn btn-primary" style="margin-bottom:0">Authorize via Upstox OAuth</a>
+
+  <div class="divider">or skip OAuth — paste token directly</div>
+
+  <!-- Method 2: Paste Token -->
+  <div class="token-box">
+    <div class="section-label">Method 2 &mdash; Paste Token (no redirect URI needed)</div>
+    <div class="step" style="margin-bottom:12px"><div class="step-num">1</div><div class="step-text">Go to <a href="https://account.upstox.com/developer/apps" target="_blank" style="color:#93c5fd">Upstox Developer Apps</a> &rarr; click your app &rarr; copy the <strong>Access Token</strong> from the API Keys tab.</div></div>
+    <form onsubmit="submitToken(event)">
+      <div class="input-group">
+        <label class="input-label" for="sb-access-token">Access Token <span style="color:#f87171">*</span></label>
+        <input id="sb-access-token" class="token-input" type="password" placeholder="Paste your Upstox access token here" autocomplete="off" />
+      </div>
+      <div class="input-group">
+        <label class="input-label" for="sb-refresh-token">Refresh Token <span style="color:#71717a">(optional — enables auto daily refresh)</span></label>
+        <input id="sb-refresh-token" class="token-input" type="password" placeholder="Paste refresh token (optional)" autocomplete="off" />
+      </div>
+      <button type="submit" class="btn btn-primary" style="margin-bottom:0">Save Token &amp; Connect</button>
+      <div class="token-status" id="token-status"></div>
+    </form>
   </div>
-  <a href="${authUrl}" class="btn btn-primary">Authorize Upstox Account</a>
+
   <a href="/" class="btn btn-secondary">Back to Dashboard</a>
-  <p class="note">${context.connectNote}</p>
+  <p class="note">Token stored in ${context.storageLabel}. Auto-refreshes at 8:30 AM IST daily if refresh token is provided.</p>
 </div></body></html>`;
 }
 

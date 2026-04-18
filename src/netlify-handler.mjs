@@ -121,6 +121,7 @@ export async function handleNetlifyRequest(request) {
     deploymentMode: "netlify",
     siteOrigin,
     callbackUrl,
+    adminToken: config.adminToken,
   };
 
   try {
