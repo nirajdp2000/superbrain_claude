@@ -109,7 +109,9 @@ export const config = {
   adminToken: process.env.SUPERBRAIN_ADMIN_TOKEN
     || (isNetlifyRuntime ? NETLIFY_DEFAULTS.adminToken : ""),
   tokenDbPath: path.resolve(process.cwd(), defaultTokenDbPath),
-  httpTimeoutMs: Math.max(1500, Number(process.env.SUPERBRAIN_HTTP_TIMEOUT_MS || 9000)),
+  // Netlify: use 4 s per HTTP call so slow scrapers fail fast within the
+  // 22-second dashboard budget. Locally default to 9 s for comfort.
+  httpTimeoutMs: Math.max(1500, Number(process.env.SUPERBRAIN_HTTP_TIMEOUT_MS || (isNetlifyRuntime ? 4000 : 9000))),
   upstoxProxyUrl: (process.env.SUPERBRAIN_UPSTOX_PROXY_URL ?? "").replace(/\/+$/, ""),
   tokenBlobStore: process.env.SUPERBRAIN_TOKEN_BLOB_STORE || "superbrain-upstox",
   upstox: {
