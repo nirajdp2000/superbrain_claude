@@ -2366,6 +2366,23 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
 
   const onSubmitRef = useRef(null);
+  const errorTimerRef = useRef(null);
+
+  // Auto-dismiss errors after 8 seconds so they don't persist across tabs.
+  function showError(msg) {
+    setError(msg);
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    if (msg) {
+      errorTimerRef.current = setTimeout(() => setError(""), 8_000);
+    }
+  }
+
+  // Clear error whenever the user switches tabs — it's always stale by then.
+  function switchTab(tab) {
+    setActiveTab(tab);
+    setError("");
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+  }
 
   const focus = analysisResult?.found ? analysisResult.analysis : dashboard?.focus || null;
   const answer = analysisResult?.found ? analysisResult.answer : "";
@@ -2405,7 +2422,7 @@ export default function App() {
       }
 
       if (nextDashboard?.timedOut) {
-        setError("Dashboard timed out — showing partial results. Try fewer symbols.");
+        showError("Dashboard timed out — showing partial results. Try fewer symbols.");
       }
       setDashboard(nextDashboard);
       if (!preserve) {
@@ -2414,7 +2431,7 @@ export default function App() {
     } catch (nextError) {
       const msg = nextError.message || "Dashboard load failed.";
       if (!silentRetry) {
-        setError(msg.includes("504") || msg.includes("timed out")
+        showError(msg.includes("504") || msg.includes("timed out")
           ? "Analysis timed out. Reduce the symbol list to 4–5 stocks and try again."
           : msg);
       }
@@ -2487,19 +2504,19 @@ export default function App() {
 
       // Backend timed out — show a friendly retry prompt instead of stale stock.
       if (payload.timedOut) {
-        setError(`Analysis for ${symbol || payload.query || "this stock"} timed out — server is warming up. Try again in a moment.`);
+        showError(`Analysis for ${symbol || payload.query || "this stock"} timed out — server is warming up. Try again in a moment.`);
         setAnalysisResult(null);
       } else {
         setAnalysisResult(payload);
-        setActiveTab("Verdict");
+        switchTab("Verdict");
         if (payload.found) {
           rememberAsk(trimmed, payload.symbol || symbol, payload.companyName || companyName);
         }
       }
     } catch (nextError) {
       const msg = nextError.message || "Ask failed.";
-      setError(msg.includes("502") || msg.includes("504") || msg.includes("timeout")
-        ? `Analysis for ${symbol || "this stock"} timed out — server is under load. Try again in a moment.`
+      showError(msg.includes("502") || msg.includes("504") || msg.includes("timeout")
+        ? `Analysis for ${symbol || "this stock"} timed out — server is warming up. Try again in a moment.`
         : msg);
     } finally {
       setAskLoading(false);
@@ -2545,7 +2562,7 @@ export default function App() {
         dashboard={dashboard}
         onFocus={focusSymbol}
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={switchTab}
       />
 
       <div className="main">
@@ -2631,7 +2648,17 @@ export default function App() {
             <ResearchQualityCard focus={focus} dashboard={dashboard} />
           </section>
 
-          {error ? <div className="error-bar">{error}</div> : null}
+          {error ? (
+            <div className="error-bar" role="alert">
+              <span>{error}</span>
+              <button
+                type="button"
+                className="error-bar-dismiss"
+                onClick={() => { setError(""); if (errorTimerRef.current) clearTimeout(errorTimerRef.current); }}
+                aria-label="Dismiss"
+              >✕</button>
+            </div>
+          ) : null}
           <ResolutionPanel result={unresolved} onFocus={focusSymbol} />
 
           {showSettings ? (
