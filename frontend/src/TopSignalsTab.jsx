@@ -395,6 +395,7 @@ function EmptySignalState({ title, body }) {
 export default function TopSignalsTab({ onFocus }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [warming, setWarming] = useState(false);
   const [bullishStocks, setBullishStocks] = useState([]);
   const [bearishStocks, setBearishStocks] = useState([]);
   const [marketOverview, setMarketOverview] = useState(null);
@@ -414,6 +415,7 @@ export default function TopSignalsTab({ onFocus }) {
   async function fetchTopSignals() {
     setLoading(true);
     setError("");
+    setWarming(false);
 
     try {
       const [overviewResponse, bullishResponse, bearishResponse] = await Promise.all([
@@ -422,16 +424,18 @@ export default function TopSignalsTab({ onFocus }) {
         fetch(`/api/v2/top-signals?type=bearish&timeframe=${selectedTimeframe}&limit=10`),
       ]);
 
-      if (!overviewResponse.ok || !bullishResponse.ok || !bearishResponse.ok) {
-        throw new Error("Signal scan is temporarily unavailable.");
-      }
+      // All three now always return 200 (backend handles errors gracefully).
+      const overviewData = overviewResponse.ok ? await overviewResponse.json() : {};
+      const bullishData = bullishResponse.ok ? await bullishResponse.json() : { stocks: [] };
+      const bearishData = bearishResponse.ok ? await bearishResponse.json() : { stocks: [] };
 
-      const overviewData = await overviewResponse.json();
-      const bullishData = await bullishResponse.json();
-      const bearishData = await bearishResponse.json();
+      // _warming: true means the server timed out but is working in the background.
+      // Show an informational message rather than a hard error.
+      const isWarming = overviewData._warming || bullishData._warming || bearishData._warming;
+      setWarming(isWarming);
 
-      if (overviewData.error || bullishData.error || bearishData.error) {
-        throw new Error(overviewData.error || bullishData.error || bearishData.error);
+      if (!isWarming && (overviewData.error || bullishData.error || bearishData.error)) {
+        setError(overviewData.error || bullishData.error || bearishData.error || "Signal scan failed.");
       }
 
       setBullishStocks(bullishData.stocks || []);
@@ -457,6 +461,17 @@ export default function TopSignalsTab({ onFocus }) {
   useEffect(() => {
     fetchTopSignals();
   }, [selectedTimeframe]);
+
+  // When the backend says it's warming up, silently retry after 20 s so the
+  // user sees real data as soon as the scan finishes without manual refresh.
+  const warmingRetryRef = useRef(null);
+  useEffect(() => {
+    if (warmingRetryRef.current) clearTimeout(warmingRetryRef.current);
+    if (warming && !loading) {
+      warmingRetryRef.current = setTimeout(fetchTopSignals, 20_000);
+    }
+    return () => { if (warmingRetryRef.current) clearTimeout(warmingRetryRef.current); };
+  }, [warming, loading]);
 
   useEffect(() => {
     if (autoRefresh) {
@@ -535,12 +550,19 @@ export default function TopSignalsTab({ onFocus }) {
         <p>The broad universe is pre-scanned first, then a smaller shortlist is deeply ranked with the full research stack. If no names clear the threshold, the panel stays empty instead of inventing example signals.</p>
       </div>
 
-      {error ? <div className="error-bar">{error}</div> : null}
+      {warming && !loading ? (
+        <div className="quality-note" style={{ borderColor: "var(--amber)", marginTop: "1rem" }}>
+          <strong>⏳ Radar warming up</strong>
+          <p>The signal scan is running in the background — Upstox is connected and fetching live quotes for 5000+ stocks. Results will appear automatically in ~20 seconds. The scan is cached for 5 minutes after the first run.</p>
+        </div>
+      ) : null}
+
+      {error && !warming ? <div className="error-bar">{error}</div> : null}
 
       {loading ? (
         <div className="signals-loading">
           <div className="spinner large" />
-          <p>Refreshing market signals...</p>
+          <p>Running live market scan — fetching quotes for 5000+ stocks…</p>
         </div>
       ) : (
         <div className="signals-board">
