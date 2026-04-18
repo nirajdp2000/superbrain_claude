@@ -3,7 +3,7 @@
   publish = "public"
 
 [build.environment]
-  SUPERBRAIN_PUBLIC_SITE_URL = "https://superbrainai.netlify.app"
+  SUPERBRAIN_PUBLIC_SITE_URL = "https://stockbrain.netlify.app"
 
 [functions]
   directory = "netlify/functions"

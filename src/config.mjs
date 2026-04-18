@@ -62,11 +62,12 @@ const isNetlifyRuntime = Boolean(
 // in Netlify Site settings.
 // ─────────────────────────────────────────────────────────
 const NETLIFY_DEFAULTS = {
-  publicSiteUrl: "https://superbrainai.netlify.app",
+  publicSiteUrl: "https://stockbrain.netlify.app",
   upstoxClientId: "4ec51c87-a099-4ade-b727-960817b31c94",
   upstoxClientSecret: "n7qldsrvus",
   adminToken: "superbrain-admin-2025",
   allowedOrigins: [
+    "https://stockbrain.netlify.app",
     "https://superbrainai.netlify.app",
     "http://localhost:3000",
     "http://localhost:5173",
