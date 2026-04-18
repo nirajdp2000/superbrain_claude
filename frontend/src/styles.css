@@ -870,7 +870,25 @@ select:focus {
   color: var(--red);
   border-color: rgba(207, 78, 78, 0.18);
   background: linear-gradient(135deg, rgba(207, 78, 78, 0.08), rgba(255, 255, 255, 0.72));
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
 }
+
+.error-bar span { flex: 1; }
+
+.error-bar-dismiss {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--red);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0.7;
+  line-height: 1;
+}
+.error-bar-dismiss:hover { opacity: 1; }
 
 .resolution-message {
   font-weight: 600;
