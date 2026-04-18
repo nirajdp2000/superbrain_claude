@@ -1,16 +1,13 @@
+// Capped at 6 — Netlify Functions have a 26-second hard limit and each
+// symbol requires multiple HTTP calls. 6 symbols comfortably fits within
+// that budget. Users can add more via the watchlist input.
 const DEFAULT_WATCHLIST = [
   "RELIANCE",
   "TCS",
   "HDFCBANK",
   "ICICIBANK",
   "INFY",
-  "HINDUNILVR",
-  "SBIN",
   "BHARTIARTL",
-  "KOTAKBANK",
-  "LT",
-  "SUNPHARMA",
-  "MARUTI",
 ];
 
 const RAW_UNIVERSE = [

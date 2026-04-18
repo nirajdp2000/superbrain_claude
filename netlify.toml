@@ -4,6 +4,7 @@
 
 [build.environment]
   SUPERBRAIN_PUBLIC_SITE_URL = "https://stockbrain.netlify.app"
+  NODE_VERSION = "20"
 
 [functions]
   directory = "netlify/functions"
