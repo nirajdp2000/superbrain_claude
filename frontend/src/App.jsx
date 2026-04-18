@@ -2374,9 +2374,11 @@ export default function App() {
   const strategyConsensus = analysisResult?.found ? (analysisResult.strategyConsensus || null) : null;
   const strategySelection = analysisResult?.found ? (analysisResult.strategySelection || null) : null;
 
-  async function loadDashboard(preserve = false) {
-    setDashLoading(true);
-    setError("");
+  async function loadDashboard(preserve = false, { silentRetry = false } = {}) {
+    if (!silentRetry) {
+      setDashLoading(true);
+      setError("");
+    }
     try {
       // Cap to 6 symbols client-side to match the server limit.
       const cappedSymbols = symbolsInput
@@ -2386,6 +2388,22 @@ export default function App() {
         params.set("horizonDays", horizon);
       }
       const nextDashboard = await apiFetch(`/api/dashboard?${params.toString()}`);
+
+      // Server returns _partial:true + skeleton rows when the build exceeds
+      // the Netlify function timeout. Show the skeleton immediately, then
+      // silently retry once — by then the Blob cache should be warm.
+      if (nextDashboard?._partial) {
+        setDashboard(nextDashboard);
+        if (!preserve) {
+          setAnalysisResult(null);
+        }
+        setError("");
+        setTimeout(() => {
+          loadDashboard(true, { silentRetry: true });
+        }, 5000);
+        return;
+      }
+
       if (nextDashboard?.timedOut) {
         setError("Dashboard timed out — showing partial results. Try fewer symbols.");
       }
@@ -2395,11 +2413,15 @@ export default function App() {
       }
     } catch (nextError) {
       const msg = nextError.message || "Dashboard load failed.";
-      setError(msg.includes("504") || msg.includes("timed out")
-        ? "Analysis timed out. Reduce the symbol list to 4–5 stocks and try again."
-        : msg);
+      if (!silentRetry) {
+        setError(msg.includes("504") || msg.includes("timed out")
+          ? "Analysis timed out. Reduce the symbol list to 4–5 stocks and try again."
+          : msg);
+      }
     } finally {
-      setDashLoading(false);
+      if (!silentRetry) {
+        setDashLoading(false);
+      }
     }
   }
 

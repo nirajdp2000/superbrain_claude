@@ -2848,11 +2848,28 @@ export async function analyzeMarket(payload = {}) {
   };
 }
 
+// Small helper: race a promise against a timeout. If it times out, resolve to
+// `fallback` instead of rejecting. Keeps the dashboard fast even when one
+// optional enrichment step hangs.
+function raceOrFallback(promise, ms, fallback, label = "op") {
+  return Promise.race([
+    promise.catch(() => fallback),
+    new Promise((resolve) => setTimeout(() => {
+      // eslint-disable-next-line no-console
+      console.warn(`[buildDashboard] ${label} timed out after ${ms}ms — using fallback`);
+      resolve(fallback);
+    }, ms)),
+  ]);
+}
+
 export async function buildDashboard(query = {}) {
   const selectedSymbols = typeof query.symbols === "string" && query.symbols.trim()
     ? query.symbols.split(",").map((value) => value.trim()).filter(Boolean)
     : getDefaultWatchlist();
   const strategy = String(query.strategy || "swing");
+  // Lite mode: skip the two heaviest optional enrichments to guarantee a
+  // sub-10-second response on cold start. Consumed via `?lite=true`.
+  const liteMode = query.lite === true || query.lite === "true";
 
   const analysis = await analyzeMarket({
     symbols: selectedSymbols,
@@ -2867,18 +2884,34 @@ export async function buildDashboard(query = {}) {
   let marketWideOpportunities = null;
   const focusBundle = analysis._bundles?.[0];
 
-  try {
-    const { topSignalsService } = await import("./top-signals-service.mjs");
-    marketWideOpportunities = await topSignalsService.getOpportunitySnapshot(strategyToOpportunityTimeframe(strategy), 3);
-  } catch {
-    marketWideOpportunities = null;
+  if (!liteMode) {
+    // Top-signals snapshot is optional — 4 s ceiling. If slow, we serve the
+    // dashboard without market-wide opportunities and the UI renders a hint.
+    try {
+      const { topSignalsService } = await import("./top-signals-service.mjs");
+      marketWideOpportunities = await raceOrFallback(
+        topSignalsService.getOpportunitySnapshot(strategyToOpportunityTimeframe(strategy), 3),
+        4000,
+        null,
+        "topSignalsService.getOpportunitySnapshot",
+      );
+    } catch {
+      marketWideOpportunities = null;
+    }
   }
 
   if (focus) {
-    focus = attachMarketWideContext(
-      await enrichRowDeep(focus, focusBundle?.candles || [], analysis.marketContext || {}),
-      marketWideOpportunities
-    );
+    // enrichRowDeep adds ATR / divergence / flow details. It's optional —
+    // cap at 4 s and fall back to the un-enriched focus row on timeout.
+    const enrichedFocus = liteMode
+      ? focus
+      : await raceOrFallback(
+          enrichRowDeep(focus, focusBundle?.candles || [], analysis.marketContext || {}),
+          4000,
+          focus,
+          "enrichRowDeep(focus)",
+        );
+    focus = attachMarketWideContext(enrichedFocus, marketWideOpportunities);
     watchlist = [focus, ...analysis.results.slice(1)];
   }
 
@@ -2901,6 +2934,7 @@ export async function buildDashboard(query = {}) {
         : 0,
     },
     disclaimer: analysis.disclaimer,
+    _lite: liteMode,
   };
 }
 
