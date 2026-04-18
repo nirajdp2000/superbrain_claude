@@ -1,13 +1,12 @@
-// Capped at 6 — Netlify Functions have a 26-second hard limit and each
-// symbol requires multiple HTTP calls. 6 symbols comfortably fits within
-// that budget. Users can add more via the watchlist input.
+// Capped at 3 for the *default* cold-start watchlist. Netlify Functions have
+// a 26-second hard cap and each symbol needs multiple external HTTP calls, so
+// the first-ever request on an empty Blob cache must be ultra-fast. Users can
+// expand the watchlist from the UI (up to 6 additional tickers) — subsequent
+// requests hit the 5-min Blob cache and return in milliseconds.
 const DEFAULT_WATCHLIST = [
   "RELIANCE",
   "TCS",
   "HDFCBANK",
-  "ICICIBANK",
-  "INFY",
-  "BHARTIARTL",
 ];
 
 const RAW_UNIVERSE = [
