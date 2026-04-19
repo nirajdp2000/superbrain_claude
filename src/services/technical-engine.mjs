@@ -67,7 +67,11 @@ export function computeADX(candles = [], period = 14) {
   });
 
   const adxValues = wilderSmooth(dx.slice(period - 1), period);
-  const latestADX = adxValues[adxValues.length - 1] || null;
+  // wilderSmooth initialises with the raw SUM (not average) of the first `period` values.
+  // DI+/DI- are unaffected because both numerator and denominator are scaled equally.
+  // ADX operates on DX (already 0–100), so the output is inflated by `period` — divide it out.
+  const rawADX = adxValues[adxValues.length - 1];
+  const latestADX = rawADX != null ? rawADX / period : null;
   const latestDIPlus = diPlus[diPlus.length - 1] || null;
   const latestDIMinus = diMinus[diMinus.length - 1] || null;
 
@@ -292,7 +296,7 @@ export function classifyWyckoffPhase(candles = []) {
     bias = "BULLISH";
     confidence = 55;
   } else {
-    phase = "UNDEFINED";
+    phase = "UNCLEAR";
     event = null;
     bias = "NEUTRAL";
     confidence = 30;

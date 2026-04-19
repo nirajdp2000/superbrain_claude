@@ -2012,22 +2012,26 @@ function AdvTechnicalPanel({ focus }) {
       {/* Wyckoff */}
       <div className="detail-card" style={{marginBottom: "0.75rem"}}>
         <Kicker>Wyckoff Phase (Ch.12)</Kicker>
-        <div className={`lt-stance lt-${wyckoffColor}`} style={{fontSize:"14px", marginBottom:"0.5rem"}}>{fmtTag(adv.wyckoff?.phase || "Unknown")}</div>
+        <div className={`lt-stance lt-${wyckoffColor}`} style={{fontSize:"14px", marginBottom:"0.5rem"}}>
+          {["UNCLEAR","UNKNOWN","UNDEFINED"].includes(adv.wyckoff?.phase) ? "Phase Unclear" : fmtTag(adv.wyckoff?.phase || "Unknown")}
+        </div>
         <div className="coverage-list">
-          <span>Event {fmtTag(adv.wyckoff?.event || "--")}</span>
+          <span>Event {adv.wyckoff?.event ? fmtTag(adv.wyckoff.event) : "—"}</span>
           <span>Volume {fmtTag(adv.wyckoff?.volumeTrend || "--")}</span>
           <span>20d price {adv.wyckoff?.priceTrend20d != null ? `${Number(adv.wyckoff.priceTrend20d) > 0 ? "+" : ""}${Number(adv.wyckoff.priceTrend20d).toFixed(1)}%` : "--"}</span>
-          <span>Confidence {adv.wyckoff?.confidence || "--"}%</span>
+          <span>Confidence {adv.wyckoff?.confidence ?? "--"}%</span>
         </div>
-        <p className="muted">{adv.wyckoff?.interpretation || "--"}</p>
+        <p className="muted">{adv.wyckoff?.interpretation || "Wyckoff phase unclear — needs more candle history."}</p>
       </div>
 
       {/* Elliott Wave */}
       <div className="detail-card" style={{marginBottom: "0.75rem"}}>
         <Kicker>Elliott Wave (Ch.12)</Kicker>
-        <div className={`lt-stance lt-${ewColor}`} style={{fontSize:"13px", marginBottom:"0.5rem"}}>{fmtTag(adv.elliottWave?.wavePosition || "Unclear")}</div>
+        <div className={`lt-stance lt-${ewColor}`} style={{fontSize:"13px", marginBottom:"0.5rem"}}>
+          {["UNCLEAR","UNKNOWN","INSUFFICIENT_PIVOTS"].includes(adv.elliottWave?.wavePosition) ? "Structure Unclear" : fmtTag(adv.elliottWave?.wavePosition || "Unclear")}
+        </div>
         <div className="coverage-list">
-          <span>Confidence {adv.elliottWave?.confidence || 0}%</span>
+          <span>Confidence {adv.elliottWave?.confidence ?? 0}%</span>
           <span>W3/W1 ratio {adv.elliottWave?.fibRatios?.wave3to1 != null ? Number(adv.elliottWave.fibRatios.wave3to1).toFixed(2) : "--"}</span>
           {adv.elliottWave?.projection?.wave5Target && <span>W5 target ~{Number(adv.elliottWave.projection.wave5Target).toFixed(1)}</span>}
         </div>
