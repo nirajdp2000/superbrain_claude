@@ -3047,6 +3047,36 @@ export async function getStockIntelligenceAllStrategies(payload = {}) {
     };
   }
 
+  // ── Phase 2-5 enrichments for the search path ────────────────────────────
+  // In analyzeMarket these run per-bundle; here we run them once for the
+  // searched stock so Adv. Technical, Frameworks, India Intel, and Options
+  // tabs all receive real data instead of showing empty "requires search" states.
+  const candles = bundle?.candles || [];
+  const [optionsEnrich, advEnrich, fundEnrich, indiaEnrich] = await Promise.allSettled([
+    raceOrFallback(
+      enrichWithOptionsData(symbol, bundle.quote?.price),
+      3000, null, "ask:options",
+    ),
+    Promise.resolve(
+      candles.length >= 20
+        ? computeEnhancedTechnicalScore(candles, bundle.technical?.score || 50)
+        : null,
+    ),
+    Promise.resolve(
+      computeEnhancedFundamentalScore(bundle.fundamentals, bundle.stock, requestedStrategy || "swing"),
+    ),
+    raceOrFallback(
+      enrichWithIndiaSignals(symbol, stock, marketContext),
+      3000, null, "ask:india",
+    ),
+  ]);
+  const askEnrichments = {
+    options: optionsEnrich.status === "fulfilled" ? optionsEnrich.value : null,
+    advanced: advEnrich.status === "fulfilled" ? advEnrich.value : null,
+    fundamental: fundEnrich.status === "fulfilled" ? fundEnrich.value : null,
+    india: indiaEnrich.status === "fulfilled" ? indiaEnrich.value : null,
+  };
+
   const strategyRows = MULTI_STRATEGY_ORDER
     .map((strategyKey) => buildAnalysisRowFromBundle({
       bundle: {
@@ -3058,6 +3088,11 @@ export async function getStockIntelligenceAllStrategies(payload = {}) {
       globalNews,
       strategy: strategyKey,
       strictVerification,
+      // Attach Phase 2-5 data so new tabs show real content on stock search.
+      optionsData: askEnrichments.options,
+      advancedTechnical: askEnrichments.advanced,
+      enhancedFundamental: askEnrichments.fundamental,
+      indiaSignals: askEnrichments.india,
     }))
     .filter(Boolean);
 

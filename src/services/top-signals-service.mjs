@@ -1,5 +1,5 @@
 import { analyzeMarket } from "./analysis-service.mjs";
-import { getQuotes } from "./market-service.mjs";
+import { getQuotesForScan } from "./market-service.mjs";
 import { getBroadEquityUniverse } from "./broad-universe-service.mjs";
 import { config } from "../config.mjs";
 
@@ -548,19 +548,24 @@ class TopSignalsService {
 
     const broadUniverse = await this.getScanUniverse();
     const t1 = Date.now();
-    console.log(`[top-signals]   universe=${broadUniverse.length} in ${t1 - t0}ms`);
+    console.log(`[top-signals]   universe=${broadUniverse.length} source=${broadUniverse[0]?.source} in ${t1 - t0}ms`);
 
-    const quotes = await getQuotes(broadUniverse);
+    // On Netlify use a 10 s quote budget so the remaining time goes to analysis.
+    // The parallel-Yahoo fallback inside getQuotesForScan handles the curated
+    // local list (which has no instrumentKey values for Upstox batch-fetching).
+    const quoteBudgetMs = config.isNetlifyRuntime ? 10_000 : 45_000;
+    const quotes = await getQuotesForScan(broadUniverse, { timeLimitMs: quoteBudgetMs });
     const t2 = Date.now();
     console.log(`[top-signals]   quotes=${quotes.length} in ${t2 - t1}ms`);
 
-    // On Netlify, a partial quote sweep is still useful — lower the minimum.
+    // Need at least a few quotes for a meaningful scan. Keep the bar very low
+    // for Netlify cold starts using the curated 82-stock fallback.
     const minimumCoverage = config.isNetlifyRuntime
-      ? Math.max(5, Math.round(broadUniverse.length * 0.003)) // 0.3%
+      ? Math.max(3, Math.round(broadUniverse.length * 0.003)) // 0.3% or at least 3
       : Math.min(250, Math.max(25, Math.round(broadUniverse.length * 0.02)));
 
     if (quotes.length < minimumCoverage) {
-      throw new Error(`Insufficient quote coverage: ${quotes.length} < ${minimumCoverage}`);
+      throw new Error(`Insufficient quote coverage: ${quotes.length} < ${minimumCoverage}. Upstox may be disconnected.`);
     }
 
     const rankings = this.quickRankUniverse(broadUniverse, quotes, strategy);

@@ -1298,6 +1298,70 @@ export async function getQuotes(stocks) {
   return results;
 }
 
+/**
+ * Quote fetcher optimised for the Signal Radar scan.
+ *
+ * The broad-universe cold-start fallback returns ~82 curated stocks, none of
+ * which have an `instrumentKey` — so `fetchUpstoxQuotes` always returns an
+ * empty array for them even when Upstox is connected.
+ *
+ * This function handles that case by fetching Yahoo quotes in PARALLEL for
+ * stocks that Upstox couldn't cover, bounded by `concurrency` concurrent
+ * requests and a `timeLimitMs` deadline so the scan never overruns its budget.
+ *
+ * For the full ~5000-stock universe (from the Blob cache) stocks DO have
+ * `instrumentKey` values, so Upstox batch-fetch handles them and the Yahoo
+ * fallback path is skipped (same behaviour as `getQuotes`).
+ */
+export async function getQuotesForScan(stocks, { timeLimitMs = 10_000 } = {}) {
+  if (!Array.isArray(stocks) || stocks.length === 0) return [];
+
+  const deadline = Date.now() + timeLimitMs;
+
+  // ── 1. Try Upstox for stocks that carry an instrumentKey ─────────────────
+  const liveStatus = await getUpstoxStatus();
+  const withKey = stocks.filter((s) => s?.instrumentKey);
+  const withoutKey = stocks.filter((s) => !s?.instrumentKey);
+
+  let liveMap = new Map();
+  if (liveStatus.connected && withKey.length > 0) {
+    const liveQuotes = await fetchUpstoxQuotes(withKey).catch(() => []);
+    for (const q of liveQuotes) liveMap.set(q.symbol, q);
+  }
+
+  // Stocks already covered by Upstox
+  const results = [];
+  const needYahoo = [];
+  for (const stock of stocks) {
+    if (liveMap.has(stock.symbol)) {
+      results.push(liveMap.get(stock.symbol));
+    } else {
+      needYahoo.push(stock);
+    }
+  }
+
+  // If we have all stocks covered, or no time left, return now.
+  if (needYahoo.length === 0 || Date.now() >= deadline) return results;
+
+  // ── 2. Parallel Yahoo for uncovered stocks (curated local fallback) ───────
+  // Cap to 25 stocks to keep the batch fast enough for the Netlify budget.
+  const YAHOO_CONCURRENCY = 8;
+  const YAHOO_CAP = 25;
+  const toFetch = needYahoo.slice(0, YAHOO_CAP);
+
+  for (let i = 0; i < toFetch.length && Date.now() < deadline; i += YAHOO_CONCURRENCY) {
+    const chunk = toFetch.slice(i, i + YAHOO_CONCURRENCY);
+    const chunkQuotes = await Promise.allSettled(chunk.map((s) => fetchYahooQuote(s)));
+    for (const settled of chunkQuotes) {
+      if (settled.status === "fulfilled" && settled.value) {
+        results.push(settled.value);
+      }
+    }
+  }
+
+  return results;
+}
+
 export async function getDailyCandles(symbol) {
   const chart = await fetchYahooChart(symbol, "6mo", "1d");
   return chart.candles || [];
