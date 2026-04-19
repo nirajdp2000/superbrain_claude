@@ -1345,8 +1345,8 @@ export async function getQuotesForScan(stocks, { timeLimitMs = 10_000 } = {}) {
 
   // ── 2. Parallel Yahoo for uncovered stocks (curated local fallback) ───────
   // Cap to 25 stocks to keep the batch fast enough for the Netlify budget.
-  const YAHOO_CONCURRENCY = 8;
-  const YAHOO_CAP = 25;
+  const YAHOO_CONCURRENCY = 10;
+  const YAHOO_CAP = 40; // Covers ~50% of the 82-stock curated fallback universe
   const toFetch = needYahoo.slice(0, YAHOO_CAP);
 
   for (let i = 0; i < toFetch.length && Date.now() < deadline; i += YAHOO_CONCURRENCY) {

@@ -15,9 +15,10 @@ class TopSignalsService {
   constructor() {
     this.cache = new Map();
     this.cacheTimeout = 3 * 60 * 1000;
-    // On Netlify (26 s hard limit) we can only deep-dive a small shortlist.
-    // Locally or on a long-running server we can afford the full 40 per side.
-    this.deepDivePerSide = config.isNetlifyRuntime ? 5 : 40;
+    // Increased from 5→12 on Netlify: with 12 per side (24 stocks total) and
+    // strictVerification:false in the scan, the chance of surfacing real
+    // BUY/SELL candidates goes up dramatically without blowing the time budget.
+    this.deepDivePerSide = config.isNetlifyRuntime ? 12 : 40;
   }
 
   mapTimeframeToStrategy(timeframe = "swing") {
@@ -576,10 +577,60 @@ class TopSignalsService {
     const t3 = Date.now();
     console.log(`[top-signals]   rankings=${rankings.length} shortlist=${shortlist.length} in ${t3 - t2}ms`);
 
+    // ── Pre-scan leaders (available even before deep analysis) ───────────────
+    // When the deep analysis produces 0 BUY/SELL results (small universe,
+    // news not verified, cold start), we fall back to these quickScore-based
+    // leaders. They're ALWAYS surfaced so the radar is never completely empty.
+    const preScanLeaders = {
+      bullish: rankings
+        .filter((r) => r.quickScore >= 54 && Number(r.tradeabilityScore ?? 0) >= 0)
+        .sort((a, b) => b.quickScore - a.quickScore || (b.tradeabilityScore ?? 0) - (a.tradeabilityScore ?? 0))
+        .slice(0, 8)
+        .map((r) => ({
+          symbol: r.stock.symbol,
+          name: r.stock.name,
+          sector: r.stock.sector,
+          price: r.quote?.price || 0,
+          changePercent: r.quote?.changePct || 0,
+          quickScore: r.quickScore,
+          tradeabilityScore: r.tradeabilityScore,
+          radarVerdict: "BUY",
+          radarScore: r.quickScore,
+          score: r.quickScore,
+          direction: "bullish",
+          reason: `Pre-scan momentum leader — price structure shows bullish bias with quickScore ${r.quickScore.toFixed(1)}. Awaiting deep analysis confirmation.`,
+          _preScan: true,
+        })),
+      bearish: rankings
+        .filter((r) => r.quickScore <= 46 && Number(r.tradeabilityScore ?? 0) >= 0)
+        .sort((a, b) => a.quickScore - b.quickScore || (b.tradeabilityScore ?? 0) - (a.tradeabilityScore ?? 0))
+        .slice(0, 8)
+        .map((r) => ({
+          symbol: r.stock.symbol,
+          name: r.stock.name,
+          sector: r.stock.sector,
+          price: r.quote?.price || 0,
+          changePercent: r.quote?.changePct || 0,
+          quickScore: r.quickScore,
+          tradeabilityScore: r.tradeabilityScore,
+          radarVerdict: "SELL",
+          radarScore: 100 - r.quickScore,
+          score: 100 - r.quickScore,
+          direction: "bearish",
+          reason: `Pre-scan momentum leader — price structure shows bearish bias with quickScore ${r.quickScore.toFixed(1)}. Awaiting deep analysis confirmation.`,
+          _preScan: true,
+        })),
+    };
+
+    // ── Deep analysis — strictVerification:false so the scan surfaces more ──
+    // The scan is a screener. News-verification strictness is reserved for the
+    // single-stock deep dive (/api/ask). Using strict=true here caused nearly
+    // all stocks to score HOLD because they lacked verified news, producing 0
+    // radar results even when the market had clear directional momentum.
     const analysis = shortlist.length ? await analyzeMarket({
       strategy,
       stocks: shortlist,
-      strictVerification: true,
+      strictVerification: false,
       includeTargetedNews: false,
       newsTargetedLimit: 0,
     }) : {
@@ -597,6 +648,7 @@ class TopSignalsService {
       deepAnalyzed: shortlist.length,
       overview,
       results: enrichedResults,
+      preScanLeaders,
     };
   }
 
@@ -766,16 +818,22 @@ class TopSignalsService {
         .slice(0, limit)
         .map((item) => this.buildSignalRow(item.row, "bullish"));
 
+      // Fall back to pre-scan momentum leaders when deep analysis yields nothing.
+      // This ensures the radar always shows something useful even on cold start.
+      const preScanBullish = scan.preScanLeaders?.bullish || [];
+      const stocks = rows.length > 0 ? rows : preScanBullish.slice(0, limit);
+
       return {
-        stocks: rows,
+        stocks,
         timeframe,
         totalAnalyzed: scan.universeCount,
         deepAnalyzed: scan.deepAnalyzed,
-        bullishFound: rows.length,
-        averageScore: rows.length ? Math.round(rows.reduce((sum, stock) => sum + stock.score, 0) / rows.length) : 0,
+        bullishFound: stocks.length,
+        averageScore: stocks.length ? Math.round(stocks.reduce((sum, stock) => sum + (stock.score || stock.radarScore || 0), 0) / stocks.length) : 0,
         lastUpdated: scan.generatedAt || new Date().toISOString(),
         _warming: Boolean(scan._warming),
         _stale: Boolean(scan._stale),
+        _preScanFallback: rows.length === 0 && stocks.length > 0,
       };
     } catch (error) {
       return {
@@ -810,16 +868,23 @@ class TopSignalsService {
         .slice(0, limit)
         .map((item) => this.buildSignalRow(item.row, "bearish"));
 
+      const preScanBearish = scan.preScanLeaders?.bearish || [];
+      const stocks = rows.length > 0 ? rows : preScanBearish.slice(0, limit);
+
       return {
-        stocks: rows,
+        stocks,
         timeframe,
         totalAnalyzed: scan.universeCount,
         deepAnalyzed: scan.deepAnalyzed,
         bearishFound: rows.length,
         averageScore: rows.length ? Math.round(rows.reduce((sum, stock) => sum + stock.score, 0) / rows.length) : 0,
         lastUpdated: scan.generatedAt || new Date().toISOString(),
+        bearishFound: stocks.length,
+        averageScore: stocks.length ? Math.round(stocks.reduce((sum, stock) => sum + (stock.score || stock.radarScore || 0), 0) / stocks.length) : 0,
+        lastUpdated: scan.generatedAt || new Date().toISOString(),
         _warming: Boolean(scan._warming),
         _stale: Boolean(scan._stale),
+        _preScanFallback: rows.length === 0 && stocks.length > 0,
       };
     } catch (error) {
       return {

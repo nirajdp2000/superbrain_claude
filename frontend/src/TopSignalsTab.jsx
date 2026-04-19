@@ -234,8 +234,9 @@ function SignalCard({ stock, type, onFocus }) {
 
       <div className="signal-card-tags">
         {stock.sector ? <span>{stock.sector}</span> : null}
-        {stock.evidenceGrade ? <span className="tag-evidence">Evidence {stock.evidenceGrade}</span> : null}
-        {stock.strictVerdict && stock.strictVerdict !== stock.radarVerdict ? <span>Core {String(stock.strictVerdict).replaceAll("_", " ")}</span> : null}
+        {stock._preScan ? <span className="tag-prescan" title="Momentum-only — deep AI analysis pending">⚡ Momentum</span> : null}
+        {stock.evidenceGrade && !stock._preScan ? <span className="tag-evidence">Evidence {stock.evidenceGrade}</span> : null}
+        {stock.strictVerdict && stock.strictVerdict !== stock.radarVerdict && !stock._preScan ? <span>Core {String(stock.strictVerdict).replaceAll("_", " ")}</span> : null}
         {stock.riskReward ? <span className="tag-rr">R:R {fmt(stock.riskReward)}:1</span> : null}
         {stock.executionReadiness === "READY FOR EXECUTION" ? <span className="tag-ready">✓ Ready</span> : null}
         {Number(stock.realTimeCount || 0) > 0 ? <span className="tag-news">{stock.realTimeCount} live</span> : null}
@@ -431,15 +432,15 @@ export default function TopSignalsTab({ onFocus }) {
 
       // _warming: true means the server timed out but is working in the background.
       // Show an informational message rather than a hard error.
-      const isWarming = overviewData._warming || bullishData._warming || bearishData._warming;
+      const isWarming = Boolean(overviewData._warming || bullishData._warming || bearishData._warming);
       setWarming(isWarming);
 
       if (!isWarming && (overviewData.error || bullishData.error || bearishData.error)) {
         setError(overviewData.error || bullishData.error || bearishData.error || "Signal scan failed.");
       }
 
-      setBullishStocks(bullishData.stocks || []);
-      setBearishStocks(bearishData.stocks || []);
+      setBullishStocks((bullishData.stocks || []).map(s => ({ ...s, _preScan: s._preScan || bullishData._preScanFallback })));
+      setBearishStocks((bearishData.stocks || []).map(s => ({ ...s, _preScan: s._preScan || bearishData._preScanFallback })));
       setMarketOverview({
         ...overviewData,
         totalStocks: overviewData.totalStocks || bullishData.totalAnalyzed || bearishData.totalAnalyzed || 0,
@@ -553,7 +554,7 @@ export default function TopSignalsTab({ onFocus }) {
       {warming && !loading ? (
         <div className="quality-note" style={{ borderColor: "var(--amber)", marginTop: "1rem" }}>
           <strong>⏳ Radar warming up</strong>
-          <p>The signal scan is running in the background — Upstox is connected and fetching live quotes for 5000+ stocks. Results will appear automatically in ~20 seconds. The scan is cached for 5 minutes after the first run.</p>
+          <p>The signal scan is running in the background. On the first load it scans live quotes and ranks a shortlist — this takes 10-20 seconds. Results appear automatically and are cached for 5 minutes.</p>
         </div>
       ) : null}
 

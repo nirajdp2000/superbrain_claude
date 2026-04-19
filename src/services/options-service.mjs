@@ -398,6 +398,27 @@ export async function enrichWithOptionsData(symbol, currentPrice) {
     ]);
 
     if (!optionsData || optionsData.source === "UNAVAILABLE") {
+      // Options chain failed (NSE API blocked from cloud, market closed, etc.)
+      // but India VIX via Yahoo Finance often still works. Return partial data
+      // so the Options tab shows VIX instead of a completely empty panel.
+      if (vixData?.vix) {
+        return {
+          available: true,
+          optionsChainAvailable: false,
+          vix: vixData.vix,
+          vixSignal: vixData.signal,
+          optionsScore: vixData.vix > 20 ? 42 : vixData.vix < 13 ? 55 : 50,
+          directionalBias: "NEUTRAL",
+          summary: "NSE options chain data is unavailable from cloud servers (NSE API is geo-restricted). India VIX is shown below from Yahoo Finance. For full options chain data (PCR, max pain, OI walls), run the app locally or connect a proxy.",
+          pcr: null,
+          pcrSignal: null,
+          maxPainStrike: null,
+          maxPainDistance: null,
+          resistanceLevel: null,
+          supportLevel: null,
+          oiWalls: { call: [], put: [] },
+        };
+      }
       return { available: false, reason: "Options chain unavailable" };
     }
 
