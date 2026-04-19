@@ -37,6 +37,70 @@ function zScore(val, mean, sd) {
 }
 
 // ─────────────────────────────────────────────
+// RSI SERIES COMPUTATION (Wilder smoothing)
+// Used by detectRSIDivergence so it receives real data
+// ─────────────────────────────────────────────
+function computeRsiSeries(closes = [], period = 14) {
+  if (closes.length < period + 2) return [];
+  const rsiVals = [];
+  // Seed: simple average of first `period` changes
+  let avgGain = 0;
+  let avgLoss = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) avgGain += diff / period;
+    else avgLoss += Math.abs(diff) / period;
+  }
+  // First RSI value
+  if (avgLoss === 0) {
+    rsiVals.push(100);
+  } else {
+    rsiVals.push(100 - 100 / (1 + avgGain / avgLoss));
+  }
+  // Wilder smooth remaining
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    const gain = Math.max(0, diff);
+    const loss = Math.max(0, -diff);
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    if (avgLoss === 0) rsiVals.push(100);
+    else rsiVals.push(100 - 100 / (1 + avgGain / avgLoss));
+  }
+  return rsiVals;
+}
+
+// ─────────────────────────────────────────────
+// MACD HISTOGRAM COMPUTATION
+// Used by detectMACDDivergence so it receives real data
+// ─────────────────────────────────────────────
+function computeEMA(data = [], period = 12) {
+  if (data.length < period) return [];
+  const k = 2 / (period + 1);
+  let ema = data.slice(0, period).reduce((s, v) => s + v, 0) / period;
+  const out = [ema];
+  for (let i = period; i < data.length; i++) {
+    ema = data[i] * k + ema * (1 - k);
+    out.push(ema);
+  }
+  return out;
+}
+
+function computeMACDHistogram(closes = []) {
+  if (closes.length < 35) return [];          // Need at least 26+9 points
+  const ema12 = computeEMA(closes, 12);
+  const ema26 = computeEMA(closes, 26);
+  if (!ema12.length || !ema26.length) return [];
+  // Align: ema12 is longer; trim head so arrays are same length
+  const offset = ema12.length - ema26.length;
+  const macdLine = ema26.map((v, i) => ema12[i + offset] - v);
+  const signal = computeEMA(macdLine, 9);
+  if (!signal.length) return [];
+  const sigOffset = macdLine.length - signal.length;
+  return signal.map((v, i) => macdLine[i + sigOffset] - v);
+}
+
+// ─────────────────────────────────────────────
 // 1. REGIME-AWARE DYNAMIC WEIGHT SYSTEM
 //    Adjusts strategy weights based on live market regime
 // ─────────────────────────────────────────────
@@ -737,9 +801,6 @@ export function enrichWithGodLevel(row, candles = [], marketContext = {}, option
   const strategy = row.strategy || "swing";
   const verdict = row.verdict || "HOLD";
 
-  // Compute RSI series for divergence (approximate from score)
-  const rsi14 = safeNum(tech.rsi14);
-
   // 1. Dynamic weights
   const dynamicWeights = getDynamicWeights(
     strategy,
@@ -748,17 +809,29 @@ export function enrichWithGodLevel(row, candles = [], marketContext = {}, option
     row.advancedTechnical?.adx?.trendStrength
   );
 
-  // 2. RSI Divergence
-  const rsiDivergence = detectRSIDivergence(candles, []);  // rsiSeries built in-engine
+  // Compute RSI series from close prices for divergence detection
+  const rsiSeries = computeRsiSeries(closes, 14);
+  const rsi14 = rsiSeries.length ? rsiSeries[rsiSeries.length - 1] : safeNum(tech.rsi14);
 
-  // 3. MACD Divergence
-  const macdDivergence = detectMACDDivergence([], closes);
+  // Compute MACD histogram from close prices for divergence detection
+  const macdHistogram = computeMACDHistogram(closes);
 
-  // 4. Relative Strength
-  const niftyReturn20d = marketContext?.benchmarks?.find(b => b.label === "Nifty 50")?.change || null;
-  const niftyReturn60d = null; // Would need 60d nifty data
+  // 2. RSI Divergence — now receives actual RSI series
+  const rsiDivergence = detectRSIDivergence(candles, rsiSeries);
+
+  // 3. MACD Divergence — now receives actual MACD histogram
+  const macdDivergence = detectMACDDivergence(macdHistogram, closes);
+
+  // 4. Relative Strength vs Nifty
+  // Use same-day changePct for both stock and Nifty so the ratio is apples-to-apples.
+  // The 60d stock return is passed as secondary confirmation (niftyReturn60d stays null
+  // because we have no stored 60d Nifty return in marketContext).
+  const nifty = marketContext?.benchmarks?.find(b => b.label === "Nifty 50");
+  const niftyReturn1d = safeNum(nifty?.changePct, null);       // today's Nifty %
+  const stockReturn1d = safeNum(row.quote?.changePct, null);   // today's stock %
   const relativeStrength = computeRelativeStrength(
-    tech.return20d, tech.return60d, niftyReturn20d, niftyReturn60d
+    stockReturn1d, tech.return20d,
+    niftyReturn1d, null
   );
 
   // 5. ATR-based targets (replace heuristic targets)
@@ -796,8 +869,13 @@ export function enrichWithGodLevel(row, candles = [], marketContext = {}, option
     atrBased: true,
   } : row.targets;
 
-  // Adjust adjusted score using RSI divergence, RS, exhaustion
-  const scoreDelta = (rsiDivergence?.delta || 0) + (relativeStrength?.delta || 0) + (exhaustion?.delta || 0);
+  // Adjust adjusted score using RSI divergence, RS, exhaustion.
+  // Only apply divergence delta when opposite to current Bayesian dominant scenario
+  // to avoid double-counting (Bayesian already factors technicals).
+  const rsiBias = rsiDivergence?.type?.includes("BULLISH") ? 1 : rsiDivergence?.type?.includes("BEARISH") ? -1 : 0;
+  const bayesianBias = bayesian?.dominantScenario === "BULLISH" ? 1 : bayesian?.dominantScenario === "BEARISH" ? -1 : 0;
+  const rsiDeltaApplied = rsiBias !== 0 && rsiBias !== bayesianBias ? (rsiDivergence?.delta || 0) * 0.5 : (rsiDivergence?.delta || 0) * 0.25;
+  const scoreDelta = rsiDeltaApplied + (relativeStrength?.delta || 0) + (exhaustion?.delta || 0);
   const newAdjustedScore = clamp((row.adjustedScore || 50) + scoreDelta * 0.4);
 
   return {

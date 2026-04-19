@@ -44,23 +44,26 @@ export function scoreQGLP(fundamentals = {}, stock = {}) {
   if (promoterHolding > 50) { qScore += 10; signals.push("Strong promoter conviction"); }
   scores.quality = Math.min(100, Math.max(0, qScore));
 
-  // G = Growth (Revenue + Profit > 20% YoY)
+  // G = Growth — calibrated for Indian market context
+  // India context: 15-18% sustained growth is excellent (not just "good"),
+  // 20%+ is exceptional. Global 25%+ threshold is too aggressive for India.
   const salesGrowth = safeNum(fundamentals.salesGrowth3yr, 0);
   const profitGrowth = safeNum(fundamentals.profitGrowth3yr, 0);
   let gScore = 0;
   const avgGrowth = (salesGrowth + profitGrowth) / 2;
-  if (avgGrowth >= 25) { gScore = 90; signals.push(`Growth ${Math.round(avgGrowth)}% — fast grower`); }
-  else if (avgGrowth >= 20) { gScore = 75; signals.push("20%+ growth — Lynch Fast Grower territory"); }
-  else if (avgGrowth >= 15) { gScore = 60; }
-  else if (avgGrowth >= 10) { gScore = 40; }
-  else { gScore = 20; signals.push("Sub-10% growth — stalwart at best"); }
+  if (avgGrowth >= 20) { gScore = 90; signals.push(`Growth ${Math.round(avgGrowth)}% — fast grower (India top tier)`); }
+  else if (avgGrowth >= 15) { gScore = 75; signals.push("15%+ growth — Lynch Fast Grower territory in Indian context"); }
+  else if (avgGrowth >= 10) { gScore = 55; signals.push("10-15% growth — solid Indian stalwart"); }
+  else if (avgGrowth >= 6) { gScore = 35; }
+  else { gScore = 15; signals.push("Sub-6% growth — below India nominal GDP growth rate"); }
   scores.growth = gScore;
 
   // L = Longevity (consistency proxy — requires 10yr data; use available fields as proxy)
-  let lScore = 50; // Default — no 10yr history available
-  if (salesGrowth > 10 && profitGrowth > 10) { lScore = 70; signals.push("Multi-year growth consistency indicated"); }
-  if (roe > 15 && salesGrowth > 15) { lScore = 80; signals.push("Quality + Growth combo suggests durability"); }
-  if (de < 0.3 && roe > 15) { lScore += 10; }
+  let lScore = 45; // Conservative default — no 10yr history available
+  if (salesGrowth > 10 && profitGrowth > 10) { lScore = 65; signals.push("Multi-year growth consistency indicated"); }
+  if (roe > 15 && salesGrowth > 12) { lScore = Math.max(lScore, 75); signals.push("Quality + Growth combo suggests durability"); }
+  if (roe > 20 && salesGrowth > 15 && de < 1) { lScore = Math.max(lScore, 85); signals.push("High ROE + growth + low debt = durable business"); }
+  if (de < 0.3 && roe > 15) { lScore = Math.min(100, lScore + 8); }
   scores.longevity = Math.min(100, lScore);
 
   // P = Price (PEG, EV/EBITDA proxy via PE vs growth)
@@ -316,43 +319,52 @@ export function classifyLynchCategory(fundamentals = {}, stock = {}) {
 // REVERSE DCF (Damodaran Method)
 // What growth is the current price implying?
 // ─────────────────────────────────────────────
-export function reverseDAF(currentPrice, eps, pe) {
+export function reverseDAF(currentPrice, eps, pe, options = {}) {
   if (!currentPrice || !eps || !pe) return null;
 
-  // India risk-free rate (approximate 10Y G-Sec yield)
-  const riskFreeRate = 7.2;
-  const equityRiskPremium = 5.5;
-  const betaProxy = 1.0;
-  const wacc = riskFreeRate + betaProxy * equityRiskPremium; // ~12.7%
+  // India risk-free rate (10Y G-Sec yield — use caller-supplied or current approximate)
+  const riskFreeRate = safeNum(options.riskFreeRate, 7.0);   // ~7% typical 2024-25
+  const equityRiskPremium = safeNum(options.erp, 5.5);       // India ERP
+  // Use sector-based beta if provided, otherwise estimate from P/E ratio
+  // High P/E → growth stock → beta typically > 1; low P/E → value/cyclical → beta ~1
+  const betaProxy = safeNum(options.beta, pe > 35 ? 1.3 : pe > 20 ? 1.1 : 0.9);
+  const wacc = riskFreeRate + betaProxy * equityRiskPremium;
 
-  // Implied growth: using simplified Gordon Growth Model inversion
-  // P = EPS * (1 + g) / (WACC - g)
-  // Solving for g: g = (P * WACC - EPS) / (P + EPS)
+  // Reverse Gordon Growth Model:
+  //   P = EPS × (1 + g) / (WACC − g)
+  //   Solving for g: g = (P × WACC − EPS) / (P + EPS)
   const waccDecimal = wacc / 100;
-  const impliedGrowth = ((currentPrice * waccDecimal) - eps) / (currentPrice + eps);
+  const rawImplied = ((currentPrice * waccDecimal) - eps) / (currentPrice + eps);
+  // Cap implied growth: cannot realistically exceed 30% perpetually, floor at -WACC
+  const impliedGrowth = Math.max(-waccDecimal, Math.min(0.30, rawImplied));
   const impliedGrowthPct = round2(impliedGrowth * 100);
 
+  // India-calibrated thresholds: >20% perpetual growth = expensive (India nominal GDP ~13%)
   let signal, interpretation;
-  if (impliedGrowthPct > 25) {
+  if (impliedGrowthPct > 20) {
     signal = "OVERVALUED";
-    interpretation = `Market pricing in ${impliedGrowthPct}% perpetual growth — almost certainly overvalued for most businesses`;
-  } else if (impliedGrowthPct > 18) {
+    interpretation = `Market pricing in ${impliedGrowthPct}% perpetual growth — above sustainable Indian corporate growth rate`;
+  } else if (impliedGrowthPct > 14) {
     signal = "RICHLY_VALUED";
-    interpretation = `Market implies ${impliedGrowthPct}% growth — high expectations baked in`;
-  } else if (impliedGrowthPct > 10) {
+    interpretation = `Market implies ${impliedGrowthPct}% growth — demanding but achievable for quality Indian franchises`;
+  } else if (impliedGrowthPct > 8) {
     signal = "FAIR_VALUE";
-    interpretation = `Market implies ${impliedGrowthPct}% growth — reasonable expectation for quality business`;
-  } else {
+    interpretation = `Market implies ${impliedGrowthPct}% growth — reasonable for an Indian quality business`;
+  } else if (impliedGrowthPct >= 0) {
     signal = "UNDERVALUED";
-    interpretation = `Market implies only ${impliedGrowthPct}% growth — low bar to beat for good businesses`;
+    interpretation = `Market implies only ${impliedGrowthPct}% growth — low bar for good businesses`;
+  } else {
+    signal = "DEEP_VALUE_OR_DISTRESS";
+    interpretation = `Market implies ${impliedGrowthPct}% growth — pricing in earnings decline; check for fundamental deterioration`;
   }
 
   return {
     impliedGrowthPct,
-    wacc,
+    wacc: round2(wacc),
+    betaUsed: round2(betaProxy),
     signal,
     interpretation,
-    message: `At ₹${currentPrice} the market is pricing in ${impliedGrowthPct}% perpetual growth. Compare to historical growth to judge valuation.`,
+    message: `At ₹${currentPrice} the market implies ${impliedGrowthPct}% perpetual growth (WACC ${round2(wacc)}%, beta ${round2(betaProxy)}). Compare to company's historical growth trajectory.`,
   };
 }
 

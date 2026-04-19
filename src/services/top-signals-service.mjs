@@ -892,9 +892,9 @@ class TopSignalsService {
         timeframe,
         totalAnalyzed: scan.universeCount,
         deepAnalyzed: scan.deepAnalyzed,
-        bearishFound: rows.length,
-        averageScore: rows.length ? Math.round(rows.reduce((sum, stock) => sum + stock.score, 0) / rows.length) : 0,
-        lastUpdated: scan.generatedAt || new Date().toISOString(),
+        // deepFound = how many stocks passed deep analysis filter (before pre-scan fallback)
+        deepFound: rows.length,
+        // bearishFound = final count after pre-scan fallback applied
         bearishFound: stocks.length,
         averageScore: stocks.length ? Math.round(stocks.reduce((sum, stock) => sum + (stock.score || stock.radarScore || 0), 0) / stocks.length) : 0,
         lastUpdated: scan.generatedAt || new Date().toISOString(),

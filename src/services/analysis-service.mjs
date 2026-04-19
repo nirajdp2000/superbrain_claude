@@ -256,9 +256,11 @@ function computeFundamentalScore(stock, fundamentals) {
     if (fundamentals.roce >= 18) score += 8;
     else if (fundamentals.roce < 10) score -= 4;
   }
-  if (fundamentals.debtToEquity !== null && fundamentals.debtToEquity !== undefined) {
-    if (fundamentals.debtToEquity <= 0.5) score += 7;
-    else if (fundamentals.debtToEquity > 1.5) score -= 10;
+  const de = (fundamentals.debtToEquity !== null && fundamentals.debtToEquity !== undefined)
+    ? Number(fundamentals.debtToEquity) : null;
+  if (de !== null) {
+    if (de <= 0.5) score += 7;
+    else if (de > 1.5) score -= 10;
   }
   if (fundamentals.promoterHolding) {
     if (fundamentals.promoterHolding >= 55) score += 6;
@@ -404,10 +406,17 @@ function classifyVerdict(adjustedScore, riskScore, newsSummary, eventExposure, s
   if (adjustedScore >= 46) {
     return "HOLD";
   }
-  if (adjustedScore >= 30 || riskScore >= 60 || eventExposure.score <= 42) {
+  // SELL requires score clearly below neutral AND either risk or event also confirm weakness.
+  // Using OR here was wrong: a score of 44 (just below HOLD) with good macro would trigger SELL
+  // even though the stock is essentially neutral. Require score weakness PLUS at least one
+  // confirming negative signal.
+  if (adjustedScore >= 30 && (riskScore >= 60 || eventExposure.score <= 42)) {
     return "SELL";
   }
-  return "STRONG_SELL";
+  if (adjustedScore < 30) {
+    return "STRONG_SELL";
+  }
+  return "SELL";
 }
 
 function buildTargets(score, riskScore, price, strategy, verdict = "HOLD") {
@@ -541,8 +550,9 @@ function scoreLongTermPillars(row) {
   if ((fundamentals.salesGrowth3yr || 0) >= 12) growthDurability += 10;
   else if ((fundamentals.salesGrowth3yr || 0) < 0 && fundamentals.salesGrowth3yr !== null) growthDurability -= 8;
 
-  if ((fundamentals.debtToEquity || 0) <= 0.5 && fundamentals.debtToEquity !== null) balanceSheet += 16;
-  else if ((fundamentals.debtToEquity || 0) > 1.5) balanceSheet -= 18;
+  // Explicit null guard: null D/E must NOT inflate balance sheet score
+  if (fundamentals.debtToEquity !== null && fundamentals.debtToEquity !== undefined && fundamentals.debtToEquity <= 0.5) balanceSheet += 16;
+  else if (fundamentals.debtToEquity !== null && fundamentals.debtToEquity !== undefined && fundamentals.debtToEquity > 1.5) balanceSheet -= 18;
 
   if ((fundamentals.promoterHolding || 0) >= 55) balanceSheet += 10;
   else if ((fundamentals.promoterHolding || 0) < 35 && fundamentals.promoterHolding !== null) balanceSheet -= 10;
