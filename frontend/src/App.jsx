@@ -1855,13 +1855,13 @@ function GodLevelReportPanel({ focus }) {
 // ═══════════════════════════════════════════════════════
 function OptionsIntelPanel({ focus }) {
   const opts = focus?.optionsIntelligence;
-  if (!focus) return <Empty text="Search for a stock to view options intelligence." />;
+  if (!focus) return <Empty text="Search for any NSE stock to view Options Intelligence — PCR, max pain, OI walls, India VIX, and options strategy suggestions." />;
   if (!opts) return (
     <div className="lt-wrap">
       <Kicker>Options Intelligence</Kicker>
       <div className="quality-note">
-        <strong>Options data not yet available</strong>
-        <p>Options chain data (PCR, max pain, OI walls) loads for F&O stocks. Search for NIFTY, BANKNIFTY, or any NSE F&O stock to activate this panel.</p>
+        <strong>Options data loading…</strong>
+        <p>Search for NIFTY, BANKNIFTY, or any NSE F&O stock (RELIANCE, TCS, HDFCBANK…) to activate this panel. Options chain data requires a live NSE connection.</p>
       </div>
     </div>
   );
@@ -1883,7 +1883,14 @@ function OptionsIntelPanel({ focus }) {
           <span>{fmtTag(opts.pcrSignal || "Unknown")}</span>
         </div>
       </div>
-      <p className="muted">{opts.summary || "Options chain analysis active."}</p>
+      {opts.optionsChainAvailable === false && (
+        <div className="quality-note" style={{ borderColor: "var(--amber)", marginBottom: "0.75rem" }}>
+          <strong>⚠ Options chain unavailable from cloud</strong>
+          <p>{opts.summary || "NSE options chain API is geo-restricted. India VIX (below) is from Yahoo Finance. For full chain data (PCR, max pain, OI walls) connect via Upstox or run locally."}</p>
+        </div>
+      )}
+      {!opts.optionsChainAvailable && <p className="muted">{opts.summary}</p>}
+      {opts.optionsChainAvailable !== false && <p className="muted">{opts.summary || "Options chain analysis active."}</p>}
       {opts.vix != null && (
         <div className="quality-note" style={{borderColor: opts.vixSignal?.includes("FEAR") ? "var(--red)" : "var(--green)"}}>
           <strong>India VIX: {Number(opts.vix).toFixed(1)}</strong>
