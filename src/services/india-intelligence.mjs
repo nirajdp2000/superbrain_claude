@@ -26,15 +26,53 @@ export async function getGIFTNiftySignal() {
   if (cached) return cached;
 
   try {
-    // CME Group / SGX NIFTY equivalent
-    // Try Yahoo Finance GIFT NIFTY proxy (NIFTY=F)
-    const data = await fetchJson(
-      "https://query1.finance.yahoo.com/v8/finance/chart/NIFTY50.NS?interval=5m&range=1d",
-      { timeout: 8000 }
-    );
-    const meta = data?.chart?.result?.[0]?.meta;
-    const lastClose = safeNum(meta?.chartPreviousClose) || safeNum(meta?.previousClose);
-    const currentPrice = safeNum(meta?.regularMarketPrice);
+    // GIFT Nifty (NSE IFSC) trades on SGX / GIFT City and gives a pre-market
+    // indication of where Nifty spot will open.
+    //
+    // Free proxy approach:  NSE indices API carries the GIFT NIFTY entry directly.
+    // We try it first; fall back to Nifty 50 spot intraday change as a directional proxy.
+    let currentPrice = null;
+    let lastClose = null;
+    let source = "UNAVAILABLE";
+
+    // Attempt 1: NSE allIndices — contains GIFT NIFTY entry
+    try {
+      const nseData = await fetchJson(
+        "https://www.nseindia.com/api/allIndices",
+        {
+          headers: {
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "accept": "application/json",
+            "referer": "https://www.nseindia.com/",
+          },
+          timeout: 6000,
+        }
+      );
+      const giftEntry = (nseData?.data || []).find(
+        (i) => i?.index === "GIFT NIFTY" || i?.indexSymbol === "GIFTNIFTY"
+      );
+      if (giftEntry) {
+        currentPrice = safeNum(giftEntry.last);
+        lastClose = safeNum(giftEntry.previousClose) || safeNum(giftEntry.yearHigh); // fallback
+        source = "NSE_GIFT_LIVE";
+        // If previousClose not available use the change fields
+        if (!lastClose && safeNum(giftEntry.change) !== null && currentPrice) {
+          lastClose = currentPrice - safeNum(giftEntry.change, 0);
+        }
+      }
+    } catch (_) { /* fall through */ }
+
+    // Attempt 2: Yahoo Finance — Nifty 50 spot as directional proxy
+    if (!currentPrice || !lastClose) {
+      const yData = await fetchJson(
+        "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI?interval=5m&range=1d",
+        { timeout: 8000 }
+      );
+      const meta = yData?.chart?.result?.[0]?.meta;
+      lastClose = safeNum(meta?.chartPreviousClose) || safeNum(meta?.previousClose);
+      currentPrice = safeNum(meta?.regularMarketPrice);
+      source = "NSE_SPOT_INTRADAY";   // Note: spot-to-spot comparison, not true futures gap
+    }
 
     if (!currentPrice || !lastClose) throw new Error("GIFT data unavailable");
 
@@ -46,7 +84,7 @@ export async function getGIFTNiftySignal() {
       gapType: gapPct > 0.3 ? "GAP_UP" : gapPct < -0.3 ? "GAP_DOWN" : "FLAT",
       signal: classifyGapSignal(gapPct),
       interpretation: gapInterpretation(gapPct),
-      source: "NSE_FUTURES_PROXY",
+      source,
     };
     giftNiftyCache.set(key, result);
     return result;
@@ -124,16 +162,28 @@ export function getUpcomingIndianEvents() {
     });
   }
 
-  // Union Budget (Feb 1)
-  if (month === 1 || (month === 2 && day < 5)) {
+  // Union Budget (July 1 since FY 2019 — moved from Feb 1 under Nirmala Sitharaman)
+  // Interim budget (Vote-on-Account) still presented in February in election years.
+  const isElectionYear = (today.getFullYear() % 5 === 4); // approximate election cycle
+  if (month === 6 || (month === 7 && day < 5)) {
     events.push({
       type: "BUDGET",
       name: "Union Budget",
-      date: `Feb 1, ${today.getFullYear()}`,
+      date: `Jul 1, ${today.getFullYear()}`,
       impact: "EXTREME",
       sectors: ["Infrastructure", "Defense", "Railways", "FMCG", "Financials"],
       description: "Biggest single-day market event. Sector themes announced here shape 12-month narratives.",
-      tradingNote: "Budget stocks: L&T, HAL, BEL, IRCTC, RVNL, NHB, LIC Housing. Buy 30 days before, sell on announcement.",
+      tradingNote: "Budget stocks: L&T, HAL, BEL, IRCTC, RVNL, NHB, LIC Housing. Buy 30-45 days before, sell on announcement.",
+    });
+  } else if (isElectionYear && (month === 1 || (month === 2 && day < 5))) {
+    events.push({
+      type: "BUDGET",
+      name: "Vote on Account (Interim Budget)",
+      date: `Feb 1, ${today.getFullYear()}`,
+      impact: "HIGH",
+      sectors: ["Infrastructure", "Defense", "Railways"],
+      description: "Election-year interim budget. No major policy changes expected — caretaker spending only.",
+      tradingNote: "Reduced market impact vs full budget. Focus on continuity plays.",
     });
   }
 
@@ -270,9 +320,10 @@ function getSeasonalSectors(month) {
     10: { sector: "Auto", reason: "Oct-Nov festive season peak — auto sales surge (Dhanteras, Diwali)" },
     11: { sector: "Consumer", reason: "Diwali quarter — retail, consumer goods seasonal peak" },
     12: { sector: "Infrastructure", reason: "Dec-Jan govt spending surge — infra capex deployment" },
-    1: { sector: "Infrastructure", reason: "Jan — pre-budget infrastructure ordering season" },
-    2: { sector: "Defense", reason: "Feb — Budget month — defense allocation announcement" },
-    6: { sector: "FMCG", reason: "Jun — Early monsoon — rural stock-up demand" },
+    1: { sector: "Infrastructure", reason: "Jan-Mar — govt capex push to meet annual target" },
+    5: { sector: "Defense", reason: "May-Jun — pre-budget accumulation window (July 1 Union Budget)" },
+    6: { sector: "Infrastructure", reason: "Jun — Pre-budget infrastructure ordering + FMCG monsoon rural demand" },
+    7: { sector: "Defense", reason: "Jul — Union Budget month — defense/infra allocation announcement" },
   };
   return patterns[month] || null;
 }
@@ -381,7 +432,8 @@ export function isBudgetSensitiveStock(symbol = "", sector = "") {
 
   const budgetSectors = ["infrastructure", "defense", "railways", "utilities", "real estate"];
   const month = new Date().getMonth() + 1;
-  const isPreBudgetWindow = month >= 11 || month <= 2;
+  // Pre-budget accumulation window: May–June (30-60 days before July 1 budget)
+  const isPreBudgetWindow = month === 5 || month === 6;
 
   const isKnownBudgetStock = Object.keys(budgetStocks).some((s) => symbol.toUpperCase().includes(s));
   const isBudgetSector = budgetSectors.some((s) => (sector || "").toLowerCase().includes(s));

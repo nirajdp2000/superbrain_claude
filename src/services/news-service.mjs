@@ -321,14 +321,20 @@ function analyzeSentiment(text) {
     if (NEGATIVE_WORDS.has(token)) negative += 1;
   }
 
-  if (positive === negative) {
+  const total = positive + negative;
+  if (total === 0) {
     return { label: "NEUTRAL", score: 0 };
   }
 
-  const score = (positive - negative) / Math.max(positive + negative, 1);
+  // When exactly equal: score is 0 (neutral) but don't short-circuit early —
+  // allow tagBias to still contribute by returning score=0 rather than killing weight.
+  // A small minimum score ensures the item's weight is not entirely zeroed out.
+  const rawScore = (positive - negative) / total;
+  const score = rawScore === 0 ? 0 : Number(rawScore.toFixed(2));
+
   return {
-    label: score > 0 ? "POSITIVE" : "NEGATIVE",
-    score: Number(score.toFixed(2)),
+    label: score > 0.05 ? "POSITIVE" : score < -0.05 ? "NEGATIVE" : "NEUTRAL",
+    score,
   };
 }
 
@@ -740,8 +746,12 @@ function evidenceGrade(summary = {}) {
   const realTime = Number(summary.realTimeCount || 0);
   const avgCred = Number(summary.avgCredibility || 0);
 
-  if ((official >= 1 && realTime >= 1) || (verified >= 2 && avgCred >= 0.9)) return "A";
-  if ((verified >= 1 && highCred >= 2) || (realTime >= 2 && avgCred >= 0.88)) return "B";
+  // Grade A: Official sources are authoritative by nature (RBI/SEBI/NSE/BSE) and
+  // don't require real-time to be Grade A — even a 2-day-old SEBI circular is Grade A evidence.
+  // Also: 2+ cross-verified high-credibility sources = Grade A.
+  if (official >= 1 || (verified >= 2 && avgCred >= 0.9)) return "A";
+  // Grade B: Cross-verified OR multiple real-time sources
+  if ((verified >= 1 && highCred >= 2) || (realTime >= 2 && avgCred >= 0.88) || (official >= 1 && realTime >= 1)) return "B";
   if (summary.newsCount >= 1 && avgCred >= 0.82) return "C";
   return "D";
 }

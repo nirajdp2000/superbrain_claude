@@ -140,7 +140,9 @@ class TradingAnalysisEngine {
       : !above && rsi < 45 ? "bearish"
       : "sideways";
 
-    const entry = trend === "bullish" ? Math.max(price, vwap) : Math.min(price, vwap);
+    // Bullish intraday: enter at or below VWAP (wait for pullback to VWAP support)
+    // Bearish intraday: enter at or above VWAP (wait for bounce to VWAP resistance)
+    const entry = trend === "bullish" ? Math.min(price, vwap) : Math.max(price, vwap);
     const stopLoss = trend === "bullish"
       ? entry - atr * profile.stopAtrMultiplier
       : entry + atr * profile.stopAtrMultiplier;
@@ -337,11 +339,12 @@ class TradingAnalysisEngine {
     const profitGrowth = safeNum(fundamentals.profitGrowth3yr);
 
     let score = 50;
-    if (roe !== null) score += (roe - 15) * 1.2;
-    if (roce !== null) score += (roce - 15) * 1.0;
-    if (de !== null) score -= Math.max(0, (de - 1)) * 8;
-    if (salesGrowth !== null) score += (salesGrowth - 10) * 0.8;
-    if (profitGrowth !== null) score += (profitGrowth - 10) * 0.8;
+    // Cap each component to prevent a single metric from dominating
+    if (roe !== null) score += clamp((roe - 15) * 1.2, -20, 18);
+    if (roce !== null) score += clamp((roce - 15) * 1.0, -15, 15);
+    if (de !== null) score -= Math.min(20, Math.max(0, (de - 1)) * 8);
+    if (salesGrowth !== null) score += clamp((salesGrowth - 10) * 0.8, -12, 12);
+    if (profitGrowth !== null) score += clamp((profitGrowth - 10) * 0.8, -12, 12);
 
     return Math.round(clamp(score, 0, 100));
   }
