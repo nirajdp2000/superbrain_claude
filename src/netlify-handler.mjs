@@ -399,19 +399,19 @@ export async function handleNetlifyRequest(request) {
     }
 
     if (request.method === "GET" && pathname === "/api/v2/market-signals") {
-      // Hard 18 s timeout — the scan is the heaviest endpoint. Returns 200 with
-      // an empty-but-valid overview on timeout so the UI shows "warming up"
-      // rather than erroring with "Signal scan is temporarily unavailable."
+      // Hard 16 s timeout — runScan now self-bounds to 14s with stale-data
+      // fallback, so the only way we hit this is if the entire chain is wedged.
+      // Returns 200 with `_warming: true` so the UI shows the warming notice.
       try {
         const overview = await Promise.race([
           topSignalsService.getMarketOverview(),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("scan_timeout")), 18_000)),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("scan_timeout")), 16_000)),
         ]);
+        // Pass through `_warming` / `_stale` from the service.
         return withCors(request, jsonResponse(overview));
       } catch (error) {
         const isTimeout = error.message === "scan_timeout";
         console.warn("[market-signals]", error.message);
-        // 200 so the frontend renders the empty state rather than erroring
         return withCors(request, jsonResponse({
           totalStocks: 0, totalAnalyzed: 0,
           bullishCount: 0, bearishCount: 0, neutralCount: 0,
@@ -444,13 +444,12 @@ export async function handleNetlifyRequest(request) {
           type === "bullish"
             ? topSignalsService.getTopBullishStocks(timeframe, limit)
             : topSignalsService.getTopBearishStocks(timeframe, limit),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("scan_timeout")), 18_000)),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("scan_timeout")), 16_000)),
         ]);
         return withCors(request, jsonResponse(result));
       } catch (error) {
         const isTimeout = error.message === "scan_timeout";
         console.warn("[top-signals]", error.message);
-        // 200 + empty list so the frontend renders "warming up" empty state
         return withCors(request, jsonResponse({
           stocks: [], timeframe, totalAnalyzed: 0,
           [`${type}Found`]: 0, averageScore: 0,
