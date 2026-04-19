@@ -1886,10 +1886,9 @@ function OptionsIntelPanel({ focus }) {
       {opts.optionsChainAvailable === false && (
         <div className="quality-note" style={{ borderColor: "var(--amber)", marginBottom: "0.75rem" }}>
           <strong>⚠ Options chain unavailable from cloud</strong>
-          <p>{opts.summary || "NSE options chain API is geo-restricted. India VIX (below) is from Yahoo Finance. For full chain data (PCR, max pain, OI walls) connect via Upstox or run locally."}</p>
+          <p>NSE options chain API is geo-restricted from Netlify cloud servers. India VIX is shown below via Yahoo Finance. For full chain data (PCR, max pain, OI walls) connect via Upstox or run locally.</p>
         </div>
       )}
-      {!opts.optionsChainAvailable && <p className="muted">{opts.summary}</p>}
       {opts.optionsChainAvailable !== false && <p className="muted">{opts.summary || "Options chain analysis active."}</p>}
       {opts.vix != null && (
         <div className="quality-note" style={{borderColor: opts.vixSignal?.includes("FEAR") ? "var(--red)" : "var(--green)"}}>

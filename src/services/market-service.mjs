@@ -1313,15 +1313,53 @@ export async function getQuotes(stocks) {
  * `instrumentKey` values, so Upstox batch-fetch handles them and the Yahoo
  * fallback path is skipped (same behaviour as `getQuotes`).
  */
+// ── Blob-backed quote cache for the scan universe ──────────────────────────
+// Persists across Netlify cold-starts so the 8-10s Yahoo batch only runs once
+// per 8-minute window. All subsequent scans within that window cost ~0s for
+// quotes, leaving the full budget for deep analysis.
+const SCAN_QUOTE_BLOB_KEY = "quote_cache:scan_universe";
+const SCAN_QUOTE_BLOB_TTL_MS = 8 * 60_000; // 8 minutes
+
+async function _getScanQuoteCache() {
+  if (!config.isNetlifyRuntime) return null;
+  try {
+    const { getStore } = await import("@netlify/blobs");
+    const store = getStore({ name: "superbrain-signals", consistency: "strong" });
+    const raw = await store.get(SCAN_QUOTE_BLOB_KEY, { type: "json" });
+    if (!raw?._expiresAt || Date.now() > raw._expiresAt) return null;
+    return Array.isArray(raw.quotes) ? raw.quotes : null;
+  } catch {
+    return null;
+  }
+}
+
+async function _saveScanQuoteCache(quotes) {
+  if (!config.isNetlifyRuntime) return;
+  try {
+    const { getStore } = await import("@netlify/blobs");
+    const store = getStore({ name: "superbrain-signals", consistency: "strong" });
+    await store.set(SCAN_QUOTE_BLOB_KEY, JSON.stringify({ quotes, _expiresAt: Date.now() + SCAN_QUOTE_BLOB_TTL_MS }));
+    console.log(`[quotes] blob cache saved: ${quotes.length} quotes`);
+  } catch (err) {
+    console.warn("[quotes] blob cache save failed:", err?.message);
+  }
+}
+
 export async function getQuotesForScan(stocks, { timeLimitMs = 10_000 } = {}) {
   if (!Array.isArray(stocks) || stocks.length === 0) return [];
+
+  // ── 0. Blob quote cache — eliminates the 8-10s Yahoo fetch on warm calls ──
+  const blobQuotes = await _getScanQuoteCache();
+  if (blobQuotes?.length >= 15) {
+    console.log(`[quotes] blob cache hit: ${blobQuotes.length} cached quotes, skipping Yahoo fetch`);
+    return blobQuotes;
+  }
 
   const deadline = Date.now() + timeLimitMs;
 
   // ── 1. Try Upstox for stocks that carry an instrumentKey ─────────────────
   const liveStatus = await getUpstoxStatus();
   const withKey = stocks.filter((s) => s?.instrumentKey);
-  const withoutKey = stocks.filter((s) => !s?.instrumentKey);
 
   let liveMap = new Map();
   if (liveStatus.connected && withKey.length > 0) {
@@ -1344,9 +1382,8 @@ export async function getQuotesForScan(stocks, { timeLimitMs = 10_000 } = {}) {
   if (needYahoo.length === 0 || Date.now() >= deadline) return results;
 
   // ── 2. Parallel Yahoo for uncovered stocks (curated local fallback) ───────
-  // Cap to 25 stocks to keep the batch fast enough for the Netlify budget.
   const YAHOO_CONCURRENCY = 10;
-  const YAHOO_CAP = 40; // Covers ~50% of the 82-stock curated fallback universe
+  const YAHOO_CAP = 82; // Fetch the full 82-stock curated universe when on Netlify
   const toFetch = needYahoo.slice(0, YAHOO_CAP);
 
   for (let i = 0; i < toFetch.length && Date.now() < deadline; i += YAHOO_CONCURRENCY) {
@@ -1357,6 +1394,11 @@ export async function getQuotesForScan(stocks, { timeLimitMs = 10_000 } = {}) {
         results.push(settled.value);
       }
     }
+  }
+
+  // ── 3. Persist to Blob so the next scan skips this fetch ──────────────────
+  if (results.length >= 15) {
+    _saveScanQuoteCache(results).catch(() => {});
   }
 
   return results;

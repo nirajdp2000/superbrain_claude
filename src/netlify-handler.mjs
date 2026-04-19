@@ -399,13 +399,13 @@ export async function handleNetlifyRequest(request) {
     }
 
     if (request.method === "GET" && pathname === "/api/v2/market-signals") {
-      // Hard 16 s timeout — runScan now self-bounds to 14s with stale-data
-      // fallback, so the only way we hit this is if the entire chain is wedged.
+      // Hard 22 s timeout — scan self-bounds to 20s; 2s headroom to serialize
+      // before Netlify's 26s hard function limit.
       // Returns 200 with `_warming: true` so the UI shows the warming notice.
       try {
         const overview = await Promise.race([
           topSignalsService.getMarketOverview(),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("scan_timeout")), 16_000)),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("scan_timeout")), 22_000)),
         ]);
         // Pass through `_warming` / `_stale` from the service.
         return withCors(request, jsonResponse(overview));
@@ -444,7 +444,7 @@ export async function handleNetlifyRequest(request) {
           type === "bullish"
             ? topSignalsService.getTopBullishStocks(timeframe, limit)
             : topSignalsService.getTopBearishStocks(timeframe, limit),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("scan_timeout")), 16_000)),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("scan_timeout")), 22_000)),
         ]);
         return withCors(request, jsonResponse(result));
       } catch (error) {

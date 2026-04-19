@@ -15,10 +15,10 @@ class TopSignalsService {
   constructor() {
     this.cache = new Map();
     this.cacheTimeout = 3 * 60 * 1000;
-    // Increased from 5→12 on Netlify: with 12 per side (24 stocks total) and
-    // strictVerification:false in the scan, the chance of surfacing real
-    // BUY/SELL candidates goes up dramatically without blowing the time budget.
-    this.deepDivePerSide = config.isNetlifyRuntime ? 12 : 40;
+    // 6 per side on Netlify: analyzeMarket is fully parallel so extra stocks
+    // add latency only for the slowest concurrent HTTP call. 6+6=12 unique
+    // stocks keeps the analysis within ~8s, well inside the 20s scan budget.
+    this.deepDivePerSide = config.isNetlifyRuntime ? 6 : 40;
   }
 
   mapTimeframeToStrategy(timeframe = "swing") {
@@ -269,13 +269,15 @@ class TopSignalsService {
     ].filter(Boolean).length;
     const momentumSupport = quickScore >= 67 && tradeability >= 8;
 
-    return adjustedScore >= 50
-      && technical >= 62
-      && macro >= 35
-      && risk <= 62
-      && confidence >= 40
-      && quickScore >= 58
-      && tradeability >= 2
+    // Thresholds intentionally relaxed for the scan (screener) path.
+    // Single-stock deep dive (/api/ask) applies stricter validation.
+    return adjustedScore >= 46
+      && technical >= 50       // was 62 — candles often limited on Netlify cold-start
+      && macro >= 28           // was 35
+      && risk <= 70            // was 62
+      && confidence >= 28      // was 40
+      && quickScore >= 52      // was 58
+      && tradeability >= -2    // was 2
       && (supportCount >= 1 || momentumSupport);
   }
 
@@ -297,12 +299,12 @@ class TopSignalsService {
     ].filter(Boolean).length;
     const momentumSupport = quickScore <= 33 && tradeability >= 8;
 
-    return adjustedScore <= 50
-      && technical <= 48
-      && confidence >= 48
-      && quickScore <= 40
-      && tradeability >= 2
-      && (risk >= 48 || macro <= 46)
+    return adjustedScore <= 54
+      && technical <= 52       // was 48
+      && confidence >= 28      // was 48
+      && quickScore <= 48      // was 40
+      && tradeability >= -2    // was 2
+      && (risk >= 44 || macro <= 48)
       && (supportCount >= 1 || momentumSupport);
   }
 
@@ -371,15 +373,21 @@ class TopSignalsService {
 
   radarVerdict(row, side = "bullish") {
     const score = side === "bullish" ? this.bullishRadarScore(row) : this.bearishRadarScore(row);
+    const quickScore = this.resolveQuickScore(row);
+    const tradeability = this.resolveTradeabilityScore(row);
 
     if (side === "bullish") {
-      if (row.verdict === "STRONG_BUY" || (this.bullishRadarConfluence(row) && score >= 100)) return "STRONG_BUY";
-      if (row.verdict === "BUY" || (this.bullishRadarConfluence(row) && score >= 58)) return "BUY";
+      if (row.verdict === "STRONG_BUY" || (this.bullishRadarConfluence(row) && score >= 75)) return "STRONG_BUY";
+      if (row.verdict === "BUY" || (this.bullishRadarConfluence(row) && score >= 30)) return "BUY";
+      // Momentum-only path: strong intraday move + tradeable → surface even if AI says HOLD
+      if (row.verdict === "HOLD" && quickScore >= 68 && tradeability >= 8) return "BUY";
       return "IGNORE";
     }
 
-    if (row.verdict === "STRONG_SELL" || (this.bearishRadarConfluence(row) && score >= 82)) return "STRONG_SELL";
-    if (row.verdict === "SELL" || (this.bearishRadarConfluence(row) && score >= 56)) return "SELL";
+    if (row.verdict === "STRONG_SELL" || (this.bearishRadarConfluence(row) && score >= 60)) return "STRONG_SELL";
+    if (row.verdict === "SELL" || (this.bearishRadarConfluence(row) && score >= 26)) return "SELL";
+    // Momentum-only bearish: strong down-day + tradeable → surface
+    if (row.verdict === "HOLD" && quickScore <= 32 && tradeability >= 8) return "SELL";
     return "IGNORE";
   }
 
@@ -668,37 +676,45 @@ class TopSignalsService {
       return blobCached;
     }
 
-    // 3. On Netlify, serve stale Blob data (up to 1h past expiry) and trigger
-    //    a background refresh. This prevents the cold-start scan timeout from
-    //    blocking the user — they always see SOMETHING immediately.
+    // 3. On Netlify, serve stale Blob data (up to 1h past expiry).
+    //    Only serve if the stale data has the current format (preScanLeaders).
+    //    Old-format blobs (without preScanLeaders) are treated as absent so
+    //    a fresh scan runs and produces proper results.
     if (config.isNetlifyRuntime) {
       const stale = await this._blobGetStale(cacheKey, 60 * 60_000);
-      if (stale) {
+      if (stale?.preScanLeaders) {
         console.log(`[top-signals] serving stale ${cacheKey}; refreshing in background`);
         this._scheduleBackgroundRefresh(strategy);
         return { ...stale, _stale: true };
       }
+      if (stale && !stale.preScanLeaders) {
+        console.log(`[top-signals] stale ${cacheKey} has old format, forcing fresh scan`);
+      }
     }
 
-    // 4. No Blob at all. Race a real scan against a 14s budget so we always
-    //    return SOMETHING on Netlify even if the scan can't finish in time.
+    // 4. No valid Blob at all. Race a real scan against a 20s budget.
+    //    With Blob-cached quotes (market-service), warm scans finish in ~8s.
+    //    The Netlify handler caps the HTTP response at 22s, so 20s gives us
+    //    enough room to complete, serialize, and return before the 26s hard limit.
     if (config.isNetlifyRuntime) {
       try {
         const data = await Promise.race([
           this._performScan(strategy),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("scan_budget_exceeded")), 14_000)),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("scan_budget_exceeded")), 20_000)),
         ]);
         this.cache.set(cacheKey, { data, timestamp: Date.now() });
-        this._blobSet(cacheKey, data).catch(() => {});
+        this._blobSet(cacheKey, data, 5 * 60_000).catch(() => {});
         return data;
       } catch (err) {
         console.warn(`[top-signals] scan timeout / failure for ${strategy}:`, err?.message || err);
-        // Trigger background refresh so the next call succeeds.
-        this._scheduleBackgroundRefresh(strategy);
+        // Use a 30s effective TTL for the warming placeholder so the next
+        // request re-tries the scan rather than serving stale warming data
+        // for the full 3-minute in-process cache window.
         const placeholder = this._buildWarmingPlaceholder(strategy);
-        // Cache the placeholder briefly so subsequent calls in the same
-        // function instance don't re-trigger the failing scan.
-        this.cache.set(cacheKey, { data: placeholder, timestamp: Date.now() });
+        this.cache.set(cacheKey, {
+          data: placeholder,
+          timestamp: Date.now() - Math.max(0, this.cacheTimeout - 30_000),
+        });
         return placeholder;
       }
     }
