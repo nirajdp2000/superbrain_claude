@@ -457,15 +457,33 @@ class TopSignalsService {
   }
 
   // ── Netlify Blobs persistence (survives cold starts) ─────────────────────
-  async _blobGet(key) {
+  // We split the read into "fresh" (within TTL) and "stale" (expired but still
+  // present) so we can serve stale results immediately on cold start while a
+  // background refresh repopulates the cache.
+  async _blobGetRaw(key) {
     if (!config.isNetlifyRuntime) return null;
     try {
       const { getStore } = await import("@netlify/blobs");
       const store = getStore({ name: "superbrain-signals", consistency: "strong" });
-      const raw = await store.get(key, { type: "json" });
-      if (!raw?._expiresAt || Date.now() > raw._expiresAt) return null;
-      return raw.data;
-    } catch { return null; }
+      return await store.get(key, { type: "json" });
+    } catch (err) {
+      console.warn(`[top-signals] blob read failed for ${key}:`, err?.message || err);
+      return null;
+    }
+  }
+
+  async _blobGet(key) {
+    const raw = await this._blobGetRaw(key);
+    if (!raw?._expiresAt || Date.now() > raw._expiresAt) return null;
+    return raw.data;
+  }
+
+  async _blobGetStale(key, maxAgeMs = 60 * 60_000) {
+    const raw = await this._blobGetRaw(key);
+    if (!raw?.data || !raw?._expiresAt) return null;
+    // Only serve stale data younger than maxAgeMs past expiry.
+    if (Date.now() - raw._expiresAt > maxAgeMs) return null;
+    return raw.data;
   }
 
   async _blobSet(key, data, ttlMs = 5 * 60_000) {
@@ -474,7 +492,107 @@ class TopSignalsService {
       const { getStore } = await import("@netlify/blobs");
       const store = getStore({ name: "superbrain-signals", consistency: "strong" });
       await store.set(key, JSON.stringify({ data, _expiresAt: Date.now() + ttlMs }));
-    } catch { /* non-critical */ }
+    } catch (err) {
+      console.warn(`[top-signals] blob write failed for ${key}:`, err?.message || err);
+    }
+  }
+
+  // Background refresh kept off the critical path. Multiple concurrent callers
+  // share the same in-flight promise so we never trigger duplicate scans.
+  _scheduleBackgroundRefresh(strategy) {
+    if (this._inFlightRefresh?.[strategy]) return;
+    if (!this._inFlightRefresh) this._inFlightRefresh = {};
+
+    this._inFlightRefresh[strategy] = this._performScan(strategy)
+      .then((data) => {
+        this.cache.set(`scan:${strategy}`, { data, timestamp: Date.now() });
+        return this._blobSet(`scan:${strategy}`, data);
+      })
+      .catch((err) => {
+        console.warn(`[top-signals] background refresh for ${strategy} failed:`, err?.message || err);
+      })
+      .finally(() => {
+        if (this._inFlightRefresh) delete this._inFlightRefresh[strategy];
+      });
+  }
+
+  // Empty placeholder result the caller can render while warming.
+  _buildWarmingPlaceholder(strategy) {
+    return {
+      strategy,
+      generatedAt: new Date().toISOString(),
+      universeCount: 0,
+      deepAnalyzed: 0,
+      overview: {
+        totalStocks: 0,
+        totalAnalyzed: 0,
+        bullishCount: 0,
+        bearishCount: 0,
+        neutralCount: 0,
+        averageScore: 0,
+        marketSentiment: "warming_up",
+        lastUpdated: new Date().toISOString(),
+        sectorRotation: [],
+        unusualActivity: [],
+      },
+      results: [],
+      _warming: true,
+    };
+  }
+
+  // The actual scan logic — separated so it can run on the critical path
+  // (locally) or as a background refresh (Netlify).
+  async _performScan(strategy = "swing") {
+    const t0 = Date.now();
+    console.log(`[top-signals] _performScan start strategy=${strategy}`);
+
+    const broadUniverse = await this.getScanUniverse();
+    const t1 = Date.now();
+    console.log(`[top-signals]   universe=${broadUniverse.length} in ${t1 - t0}ms`);
+
+    const quotes = await getQuotes(broadUniverse);
+    const t2 = Date.now();
+    console.log(`[top-signals]   quotes=${quotes.length} in ${t2 - t1}ms`);
+
+    // On Netlify, a partial quote sweep is still useful — lower the minimum.
+    const minimumCoverage = config.isNetlifyRuntime
+      ? Math.max(5, Math.round(broadUniverse.length * 0.003)) // 0.3%
+      : Math.min(250, Math.max(25, Math.round(broadUniverse.length * 0.02)));
+
+    if (quotes.length < minimumCoverage) {
+      throw new Error(`Insufficient quote coverage: ${quotes.length} < ${minimumCoverage}`);
+    }
+
+    const rankings = this.quickRankUniverse(broadUniverse, quotes, strategy);
+    const shortlist = this.buildShortlist(rankings);
+    const overview = this.buildOverviewFromPreScan(rankings, broadUniverse.length);
+    overview.sectorRotation = this.buildSectorRotation(rankings);
+    overview.unusualActivity = this.buildUnusualActivity(rankings, 8);
+    const t3 = Date.now();
+    console.log(`[top-signals]   rankings=${rankings.length} shortlist=${shortlist.length} in ${t3 - t2}ms`);
+
+    const analysis = shortlist.length ? await analyzeMarket({
+      strategy,
+      stocks: shortlist,
+      strictVerification: true,
+      includeTargetedNews: false,
+      newsTargetedLimit: 0,
+    }) : {
+      generatedAt: new Date().toISOString(),
+      results: [],
+    };
+    const t4 = Date.now();
+    console.log(`[top-signals]   analyzeMarket in ${t4 - t3}ms total ${t4 - t0}ms`);
+
+    const enrichedResults = this.attachPreScanContext(analysis.results || [], rankings);
+    return {
+      strategy,
+      generatedAt: analysis.generatedAt || new Date().toISOString(),
+      universeCount: broadUniverse.length,
+      deepAnalyzed: shortlist.length,
+      overview,
+      results: enrichedResults,
+    };
   }
 
   async runScan(strategy = "swing") {
@@ -486,52 +604,51 @@ class TopSignalsService {
       return memCached.data;
     }
 
-    // 2. Blob cache (survives Netlify cold starts)
+    // 2. Blob cache — fresh (within TTL)
     const blobCached = await this._blobGet(cacheKey);
     if (blobCached) {
       this.cache.set(cacheKey, { data: blobCached, timestamp: Date.now() });
       return blobCached;
     }
 
-    const broadUniverse = await this.getScanUniverse();
-    const quotes = await getQuotes(broadUniverse);
-    // On Netlify, a partial quote sweep is still useful — lower the minimum.
-    const minimumCoverage = config.isNetlifyRuntime
-      ? Math.max(10, Math.round(broadUniverse.length * 0.005)) // 0.5%
-      : Math.min(250, Math.max(25, Math.round(broadUniverse.length * 0.02)));
-
-    if (quotes.length < minimumCoverage) {
-      throw new Error("Broad market quote sweep is unavailable. Reconnect Upstox to restore 5000+ stock scanning.");
+    // 3. On Netlify, serve stale Blob data (up to 1h past expiry) and trigger
+    //    a background refresh. This prevents the cold-start scan timeout from
+    //    blocking the user — they always see SOMETHING immediately.
+    if (config.isNetlifyRuntime) {
+      const stale = await this._blobGetStale(cacheKey, 60 * 60_000);
+      if (stale) {
+        console.log(`[top-signals] serving stale ${cacheKey}; refreshing in background`);
+        this._scheduleBackgroundRefresh(strategy);
+        return { ...stale, _stale: true };
+      }
     }
 
-    const rankings = this.quickRankUniverse(broadUniverse, quotes, strategy);
-    const shortlist = this.buildShortlist(rankings);
-    const overview = this.buildOverviewFromPreScan(rankings, broadUniverse.length);
-    overview.sectorRotation = this.buildSectorRotation(rankings);
-    overview.unusualActivity = this.buildUnusualActivity(rankings, 8);
-    const analysis = shortlist.length ? await analyzeMarket({
-      strategy,
-      stocks: shortlist,
-      strictVerification: true,
-      includeTargetedNews: false,
-      newsTargetedLimit: 0,
-    }) : {
-      generatedAt: new Date().toISOString(),
-      results: [],
-    };
-    const enrichedResults = this.attachPreScanContext(analysis.results || [], rankings);
+    // 4. No Blob at all. Race a real scan against a 14s budget so we always
+    //    return SOMETHING on Netlify even if the scan can't finish in time.
+    if (config.isNetlifyRuntime) {
+      try {
+        const data = await Promise.race([
+          this._performScan(strategy),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("scan_budget_exceeded")), 14_000)),
+        ]);
+        this.cache.set(cacheKey, { data, timestamp: Date.now() });
+        this._blobSet(cacheKey, data).catch(() => {});
+        return data;
+      } catch (err) {
+        console.warn(`[top-signals] scan timeout / failure for ${strategy}:`, err?.message || err);
+        // Trigger background refresh so the next call succeeds.
+        this._scheduleBackgroundRefresh(strategy);
+        const placeholder = this._buildWarmingPlaceholder(strategy);
+        // Cache the placeholder briefly so subsequent calls in the same
+        // function instance don't re-trigger the failing scan.
+        this.cache.set(cacheKey, { data: placeholder, timestamp: Date.now() });
+        return placeholder;
+      }
+    }
 
-    const data = {
-      strategy,
-      generatedAt: analysis.generatedAt || new Date().toISOString(),
-      universeCount: broadUniverse.length,
-      deepAnalyzed: shortlist.length,
-      overview,
-      results: enrichedResults,
-    };
-
+    // 5. Local dev / long-running server: synchronous scan, no time budget.
+    const data = await this._performScan(strategy);
     this.cache.set(cacheKey, { data, timestamp: Date.now() });
-    // Persist to Blobs async — don't block the response.
     this._blobSet(cacheKey, data).catch(() => {});
     return data;
   }
@@ -582,6 +699,9 @@ class TopSignalsService {
         ...scan.overview,
         deepAnalyzed: scan.deepAnalyzed,
         scanStrategy: scan.strategy,
+        // Propagate so frontend can show warming/stale notice.
+        _warming: Boolean(scan._warming),
+        _stale: Boolean(scan._stale),
       };
     } catch (error) {
       return {
@@ -593,6 +713,7 @@ class TopSignalsService {
         averageScore: 0,
         marketSentiment: "unavailable",
         lastUpdated: new Date().toISOString(),
+        _warming: true,
         error: error.message,
       };
     }
@@ -648,6 +769,8 @@ class TopSignalsService {
         bullishFound: rows.length,
         averageScore: rows.length ? Math.round(rows.reduce((sum, stock) => sum + stock.score, 0) / rows.length) : 0,
         lastUpdated: scan.generatedAt || new Date().toISOString(),
+        _warming: Boolean(scan._warming),
+        _stale: Boolean(scan._stale),
       };
     } catch (error) {
       return {
@@ -657,6 +780,7 @@ class TopSignalsService {
         bullishFound: 0,
         averageScore: 0,
         lastUpdated: new Date().toISOString(),
+        _warming: true,
         error: error.message,
       };
     }
@@ -689,6 +813,8 @@ class TopSignalsService {
         bearishFound: rows.length,
         averageScore: rows.length ? Math.round(rows.reduce((sum, stock) => sum + stock.score, 0) / rows.length) : 0,
         lastUpdated: scan.generatedAt || new Date().toISOString(),
+        _warming: Boolean(scan._warming),
+        _stale: Boolean(scan._stale),
       };
     } catch (error) {
       return {
@@ -698,6 +824,7 @@ class TopSignalsService {
         bearishFound: 0,
         averageScore: 0,
         lastUpdated: new Date().toISOString(),
+        _warming: true,
         error: error.message,
       };
     }

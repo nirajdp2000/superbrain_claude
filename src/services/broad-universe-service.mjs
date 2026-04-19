@@ -4,10 +4,20 @@ import zlib from "zlib";
 import { fetchWithTimeout } from "../utils/http.mjs";
 import { TTLCache } from "../utils/ttl-cache.mjs";
 import { getUniverse } from "../data/universe.mjs";
+import { config } from "../config.mjs";
 
 const universeCache = new TTLCache(12 * 60 * 60_000);
 const cacheFilePath = path.resolve(process.cwd(), "data", "broad-equity-universe.json");
 const CACHE_VERSION = 2;
+const BLOB_KEY = "broad-equity-universe-v2";
+const BLOB_TTL_MS = 12 * 60 * 60_000; // 12 hours
+const BLOB_STORE_NAME = "superbrain-universe";
+
+// On Netlify cold start, downloading NSE+BSE JSON costs several seconds which
+// we cannot afford inside the 26s function budget. The in-flight refresh
+// promise is shared so only one cold invocation ever triggers the actual
+// download — every other caller gets the local fallback immediately.
+let inFlightRefresh = null;
 
 const INSTRUMENT_SOURCES = [
   {
@@ -214,53 +224,154 @@ function writeDiskCache(payload) {
   }
 }
 
+// ── Netlify Blobs persistence (survives cold starts) ─────────────────────
+async function readBlobCache() {
+  if (!config.isNetlifyRuntime) return null;
+  try {
+    const { getStore } = await import("@netlify/blobs");
+    const store = getStore({ name: BLOB_STORE_NAME, consistency: "strong" });
+    const raw = await store.get(BLOB_KEY, { type: "json" });
+    if (!raw?._expiresAt || Date.now() > raw._expiresAt) {
+      return null;
+    }
+    if (!Array.isArray(raw.items) || raw.items.length === 0) {
+      return null;
+    }
+    return raw;
+  } catch (err) {
+    console.warn("[broad-universe] blob read failed:", err?.message || err);
+    return null;
+  }
+}
+
+async function writeBlobCache(payload) {
+  if (!config.isNetlifyRuntime) return;
+  try {
+    const { getStore } = await import("@netlify/blobs");
+    const store = getStore({ name: BLOB_STORE_NAME, consistency: "strong" });
+    await store.set(BLOB_KEY, JSON.stringify({
+      ...payload,
+      _expiresAt: Date.now() + BLOB_TTL_MS,
+    }));
+  } catch (err) {
+    console.warn("[broad-universe] blob write failed:", err?.message || err);
+  }
+}
+
+function buildLocalFallback() {
+  return getUniverse().map((stock) => ({
+    ...stock,
+    isin: "",
+    source: stock.source || "local-universe",
+  }));
+}
+
+async function downloadAndCache() {
+  const t0 = Date.now();
+  const rawRows = (await Promise.all(INSTRUMENT_SOURCES.map(fetchInstrumentSource))).flat();
+  const items = dedupeUniverse(rawRows);
+
+  if (items.length === 0) {
+    throw new Error("Empty universe after dedupe");
+  }
+
+  const payload = {
+    version: CACHE_VERSION,
+    fetchedAt: new Date().toISOString(),
+    source: "upstox-bod",
+    count: items.length,
+    items,
+  };
+
+  universeCache.set("broad-equity-universe", payload, 12 * 60 * 60_000);
+  writeDiskCache(payload);
+  await writeBlobCache(payload);
+  console.log(`[broad-universe] downloaded ${items.length} instruments in ${Date.now() - t0}ms`);
+  return items;
+}
+
+/**
+ * Fetches the broad equity universe with aggressive cold-start optimization:
+ *
+ * 1. In-process cache hit → return immediately
+ * 2. Netlify Blobs cache hit → hydrate in-process cache, return
+ * 3. Disk cache hit (local dev) → hydrate in-process cache, return
+ * 4. Cold start with no cache:
+ *    - On Netlify: return LOCAL FALLBACK immediately (~82 curated stocks),
+ *      kick off async download to populate Blob cache for next request
+ *    - Locally: download synchronously
+ */
 export async function getBroadEquityUniverse(forceRefresh = false) {
+  // 1. In-process cache
   const cached = universeCache.get("broad-equity-universe");
   if (cached && !forceRefresh) {
     return cached.items;
   }
 
+  // 2. Netlify Blobs cache (survives cold starts)
+  if (!forceRefresh) {
+    const blobCached = await readBlobCache();
+    if (blobCached) {
+      universeCache.set("broad-equity-universe", blobCached, 12 * 60 * 60_000);
+      console.log(`[broad-universe] blob hit: ${blobCached.items.length} instruments`);
+      return blobCached.items;
+    }
+  }
+
+  // 3. Disk cache (local dev only)
   const diskCached = readDiskCache();
   if (diskCached && !forceRefresh) {
     universeCache.set("broad-equity-universe", diskCached, 12 * 60 * 60_000);
+    // Also seed the Blob cache so the next Netlify cold start is fast.
+    writeBlobCache(diskCached).catch(() => {});
     return diskCached.items;
   }
 
-  try {
-    const rawRows = (await Promise.all(INSTRUMENT_SOURCES.map(fetchInstrumentSource))).flat();
-    const items = dedupeUniverse(rawRows);
-
-    if (items.length > 0) {
-      const payload = {
-        version: CACHE_VERSION,
-        fetchedAt: new Date().toISOString(),
-        source: "upstox-bod",
-        count: items.length,
-        items,
-      };
-      universeCache.set("broad-equity-universe", payload, 12 * 60 * 60_000);
-      writeDiskCache(payload);
-      return items;
+  // 4. Cold start with no cache
+  //    On Netlify: return fallback now, fetch real universe in background.
+  //    Locally: fetch synchronously.
+  if (config.isNetlifyRuntime) {
+    // Kick off download asynchronously — shared across concurrent callers.
+    if (!inFlightRefresh) {
+      inFlightRefresh = downloadAndCache()
+        .catch((err) => {
+          console.warn("[broad-universe] background download failed:", err?.message || err);
+        })
+        .finally(() => {
+          inFlightRefresh = null;
+        });
     }
-  } catch {
-    // Fall through to local fallback below.
+
+    const fallback = buildLocalFallback();
+    console.log(`[broad-universe] cold start: returning ${fallback.length} curated stocks while download runs in background`);
+    const payload = {
+      version: CACHE_VERSION,
+      fetchedAt: new Date().toISOString(),
+      source: "local-fallback",
+      count: fallback.length,
+      items: fallback,
+    };
+    // Short TTL so we retry the Blob cache (or fresh download) soon.
+    universeCache.set("broad-equity-universe", payload, 2 * 60_000);
+    return fallback;
   }
 
-  const fallback = getUniverse().map((stock) => ({
-    ...stock,
-    isin: "",
-    source: stock.source || "local-universe",
-  }));
-
-  const payload = {
-    version: CACHE_VERSION,
-    fetchedAt: new Date().toISOString(),
-    source: "local-fallback",
-    count: fallback.length,
-    items: fallback,
-  };
-  universeCache.set("broad-equity-universe", payload, 30 * 60_000);
-  return fallback;
+  // Local dev / long-running server: synchronous download with fallback on error.
+  try {
+    return await downloadAndCache();
+  } catch (err) {
+    console.warn("[broad-universe] download failed, using fallback:", err?.message || err);
+    const fallback = buildLocalFallback();
+    const payload = {
+      version: CACHE_VERSION,
+      fetchedAt: new Date().toISOString(),
+      source: "local-fallback",
+      count: fallback.length,
+      items: fallback,
+    };
+    universeCache.set("broad-equity-universe", payload, 30 * 60_000);
+    return fallback;
+  }
 }
 
 export async function getBroadEquityUniverseStats(forceRefresh = false) {
