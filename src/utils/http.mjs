@@ -1,7 +1,7 @@
 import { config } from "../config.mjs";
 
 const DEFAULT_HEADERS = {
-  "user-agent": "SuperbrainIndia/1.0 (+Indian market intelligence service)",
+  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
   accept: "application/json,text/plain,text/html,application/xml,text/xml,*/*",
 };
 

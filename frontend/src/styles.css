@@ -357,6 +357,44 @@ select:focus {
   font-family: "IBM Plex Mono", monospace;
 }
 
+/* Phase 1.7 — snapshot freshness banner */
+.aof-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 28px;
+  background: rgba(42, 103, 191, 0.05);
+  border-bottom: 1px solid rgba(42, 103, 191, 0.1);
+  font-size: 11px;
+  color: var(--text-secondary, #6b7280);
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.aof-snap {
+  opacity: 0.7;
+}
+
+.aof-refresh {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--cyan, #2a67bf);
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.aof-refresh:hover:not(:disabled) {
+  background: rgba(42, 103, 191, 0.1);
+}
+
+.aof-refresh:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .main-scroll {
   position: relative;
   flex: 1;
@@ -3731,4 +3769,477 @@ body::after {
   letter-spacing: 0.04em;
   font-weight: 600;
 }
+
+/* ════════════════════════════════════════════════════════════════
+   ██ PREMIUM VISUAL UPGRADE  —  Global Enhancement Pass
+   Appended last so cascade overrides earlier declarations.
+   ════════════════════════════════════════════════════════════════ */
+
+/* ── Refined root tokens ─────────────────────────────────────── */
+:root {
+  --bg: #edf0f8;
+  --surface-muted: #f1f4fb;
+  --border: rgba(15, 27, 45, 0.075);
+  --border-strong: rgba(15, 27, 45, 0.13);
+  --muted: #5c6f85;
+  --green: #0fa866;
+  --green-bg: rgba(15, 168, 102, 0.09);
+  --red: #ce3d3d;
+  --red-bg: rgba(206, 61, 61, 0.09);
+  --amber: #bd7810;
+  --amber-bg: rgba(189, 120, 16, 0.09);
+  --cyan: #1c5dce;
+  --cyan-bg: rgba(28, 93, 206, 0.08);
+  --shadow: 0 16px 48px rgba(12, 24, 48, 0.10);
+  --shadow-soft: 0 6px 18px rgba(12, 24, 48, 0.07);
+  --shadow-sm: 0 2px 7px rgba(12, 24, 48, 0.05);
+  --radius-xl: 28px;
+}
+
+/* ── Body — richer background ───────────────────────────────── */
+body {
+  background:
+    radial-gradient(circle at top left, rgba(28, 93, 206, 0.13), transparent 28%),
+    radial-gradient(circle at top right, rgba(15, 168, 102, 0.09), transparent 24%),
+    linear-gradient(180deg, #f4f7fd 0%, #eaeff8 100%);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   STAT BOXES — premium cards with color-coded left accent bar
+   ══════════════════════════════════════════════════════════════ */
+.stat-box {
+  padding: 15px 16px 14px;
+  border-radius: 16px;
+  background: var(--surface-strong);
+  border: 1px solid rgba(15, 27, 45, 0.08);
+  box-shadow: 0 2px 7px rgba(12, 24, 48, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.88);
+  position: relative;
+  overflow: hidden;
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+/* Neutral left bar — fallback when no color class */
+.stat-box::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  border-radius: 16px 0 0 16px;
+  background: rgba(28, 93, 206, 0.14);
+}
+
+/* Green accent — price up, target, ROE, etc. */
+.stat-box:has(.stat-value.green) {
+  border-color: rgba(15, 168, 102, 0.14);
+  background: linear-gradient(150deg, rgba(15, 168, 102, 0.045) 0%, #ffffff 55%);
+}
+.stat-box:has(.stat-value.green)::before {
+  background: linear-gradient(180deg, #1bae73, #0fa866);
+}
+
+/* Red accent — price down, stop-loss, etc. */
+.stat-box:has(.stat-value.red) {
+  border-color: rgba(206, 61, 61, 0.14);
+  background: linear-gradient(150deg, rgba(206, 61, 61, 0.04) 0%, #ffffff 55%);
+}
+.stat-box:has(.stat-value.red)::before {
+  background: linear-gradient(180deg, #cf4e4e, #ce3d3d);
+}
+
+/* Amber accent */
+.stat-box:has(.stat-value.amber) {
+  border-color: rgba(189, 120, 16, 0.14);
+  background: linear-gradient(150deg, rgba(189, 120, 16, 0.04) 0%, #ffffff 55%);
+}
+.stat-box:has(.stat-value.amber)::before {
+  background: linear-gradient(180deg, #c48721, #bd7810);
+}
+
+/* Stat label — cleaner */
+.stat-label {
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 7px;
+  display: block;
+  font-weight: 600;
+}
+
+/* Stat value — bigger, bolder */
+.stat-value {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  display: block;
+}
+
+/* Stat sub-label — mono, smaller */
+.stat-sub {
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-top: 5px;
+  display: block;
+  font-family: "IBM Plex Mono", monospace;
+  letter-spacing: -0.01em;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   SCORE BARS — thicker + vivid gradient fills
+   ══════════════════════════════════════════════════════════════ */
+.score-bar-track {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(15, 27, 45, 0.07);
+}
+.score-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+}
+.score-fill-green {
+  background: linear-gradient(90deg, #2ed18d, #0fa866);
+  box-shadow: 0 2px 8px rgba(15, 168, 102, 0.28);
+}
+.score-fill-red {
+  background: linear-gradient(90deg, #ea8484, #ce3d3d);
+  box-shadow: 0 2px 8px rgba(206, 61, 61, 0.22);
+}
+.score-fill-amber {
+  background: linear-gradient(90deg, #eac563, #bd7810);
+  box-shadow: 0 2px 8px rgba(189, 120, 16, 0.22);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   VERDICT CARD — more premium container
+   ══════════════════════════════════════════════════════════════ */
+.verdict-card {
+  border-radius: var(--radius-xl);
+  box-shadow: 0 22px 60px rgba(12, 24, 48, 0.10);
+  border-color: rgba(70, 120, 200, 0.12);
+}
+
+.verdict-stats {
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.verdict-action,
+.lt-stance {
+  font-size: clamp(32px, 4.2vw, 48px);
+  letter-spacing: -0.05em;
+  font-weight: 800;
+}
+
+.verdict-score-box,
+.lt-score {
+  border-radius: 22px;
+  box-shadow: 0 10px 24px rgba(12, 24, 48, 0.09);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   BADGES & PILLS — more prominent
+   ══════════════════════════════════════════════════════════════ */
+.badge,
+.pill {
+  padding: 6px 13px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.badge-green,
+.pill-green {
+  background: linear-gradient(135deg, rgba(15, 168, 102, 0.12), rgba(15, 168, 102, 0.07));
+  color: #0a7a48;
+  border-color: rgba(15, 168, 102, 0.20);
+  box-shadow: 0 2px 6px rgba(15, 168, 102, 0.10);
+}
+.badge-red,
+.pill-red {
+  background: linear-gradient(135deg, rgba(206, 61, 61, 0.11), rgba(206, 61, 61, 0.07));
+  color: #962828;
+  border-color: rgba(206, 61, 61, 0.18);
+  box-shadow: 0 2px 6px rgba(206, 61, 61, 0.10);
+}
+.badge-amber,
+.pill-amber {
+  background: linear-gradient(135deg, rgba(189, 120, 16, 0.11), rgba(189, 120, 16, 0.07));
+  color: #895808;
+  border-color: rgba(189, 120, 16, 0.18);
+  box-shadow: 0 2px 6px rgba(189, 120, 16, 0.10);
+}
+.badge-cyan {
+  background: linear-gradient(135deg, rgba(28, 93, 206, 0.10), rgba(28, 93, 206, 0.06));
+  color: #1246a0;
+  border-color: rgba(28, 93, 206, 0.16);
+  box-shadow: 0 2px 6px rgba(28, 93, 206, 0.09);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   HERO CARDS — more distinct per type
+   ══════════════════════════════════════════════════════════════ */
+.hero-card {
+  border-radius: var(--radius-xl);
+  box-shadow: 0 22px 60px rgba(12, 24, 48, 0.09);
+  border-color: rgba(70, 120, 200, 0.11);
+}
+.hero-card-summary {
+  background: linear-gradient(148deg, #ffffff 0%, rgba(232, 242, 255, 0.96) 100%);
+}
+.hero-card-chart {
+  background: linear-gradient(148deg, #fcfeff 0%, rgba(228, 244, 255, 0.95) 100%);
+}
+.hero-card-quality {
+  background: linear-gradient(148deg, #f8fdff 0%, rgba(230, 246, 255, 0.95) 100%);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   SIGNAL CARDS — richer hover, color tints per direction
+   ══════════════════════════════════════════════════════════════ */
+.signal-card {
+  border-radius: 22px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.signal-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 26px 52px rgba(12, 24, 48, 0.14);
+}
+.signal-card-bullish {
+  background: linear-gradient(168deg, #ffffff 0%, rgba(238, 252, 246, 0.95) 100%);
+  border-color: rgba(15, 168, 102, 0.15);
+}
+.signal-card-bearish {
+  background: linear-gradient(168deg, #ffffff 0%, rgba(255, 244, 244, 0.95) 100%);
+  border-color: rgba(206, 61, 61, 0.14);
+}
+.signal-pill-bullish {
+  background: linear-gradient(135deg, rgba(15, 168, 102, 0.13), rgba(15, 168, 102, 0.08));
+  color: #0a7a48;
+  box-shadow: 0 2px 6px rgba(15, 168, 102, 0.12);
+}
+.signal-pill-bearish {
+  background: linear-gradient(135deg, rgba(206, 61, 61, 0.12), rgba(206, 61, 61, 0.07));
+  color: #962828;
+  box-shadow: 0 2px 6px rgba(206, 61, 61, 0.10);
+}
+.signal-strength-track {
+  height: 7px;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   TIMEFRAME CARDS — richer, more depth
+   ══════════════════════════════════════════════════════════════ */
+.timeframe-card {
+  border-radius: 24px;
+  box-shadow: 0 10px 28px rgba(12, 24, 48, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+.timeframe-green {
+  background: linear-gradient(160deg, #ffffff 0%, rgba(238, 252, 246, 0.96) 100%);
+  border-color: rgba(15, 168, 102, 0.18);
+}
+.timeframe-red {
+  background: linear-gradient(160deg, #ffffff 0%, rgba(255, 243, 243, 0.96) 100%);
+  border-color: rgba(206, 61, 61, 0.16);
+}
+.timeframe-amber {
+  background: linear-gradient(160deg, #ffffff 0%, rgba(255, 250, 238, 0.96) 100%);
+  border-color: rgba(189, 120, 16, 0.18);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   CONSENSUS BANNER — more striking
+   ══════════════════════════════════════════════════════════════ */
+.consensus-banner {
+  border-radius: 24px;
+  border-color: rgba(70, 120, 200, 0.14);
+  box-shadow: 0 18px 50px rgba(12, 24, 48, 0.09);
+  background: linear-gradient(145deg, rgba(245, 250, 255, 0.99) 0%, rgba(230, 243, 255, 0.96) 100%);
+}
+.consensus-chip {
+  border-radius: 20px;
+  box-shadow: 0 4px 10px rgba(12, 24, 48, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.90);
+}
+.consensus-chip strong {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+.consensus-chip-focus {
+  background: linear-gradient(140deg, rgba(26, 74, 145, 0.97), rgba(15, 124, 144, 0.93));
+  box-shadow: 0 12px 28px rgba(18, 66, 152, 0.24);
+}
+.consensus-title {
+  font-size: 26px;
+  letter-spacing: -0.05em;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   NAV ITEMS — premium active state with left indicator
+   ══════════════════════════════════════════════════════════════ */
+.nav-item {
+  position: relative;
+}
+.nav-active {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.06)) !important;
+  color: #ffffff !important;
+  border-color: rgba(126, 203, 255, 0.18) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 4px 14px rgba(0, 0, 0, 0.18) !important;
+}
+.nav-active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 58%;
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, #4ab4ff, #26d7a3);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   TOPBAR — refined glass
+   ══════════════════════════════════════════════════════════════ */
+.topbar {
+  backdrop-filter: blur(20px);
+  background: rgba(246, 248, 253, 0.88);
+  border-bottom: 1px solid rgba(15, 27, 45, 0.07);
+  box-shadow: 0 10px 30px rgba(12, 24, 48, 0.07);
+}
+.topbar-regime {
+  background: rgba(28, 93, 206, 0.07);
+  color: var(--cyan);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 8px 14px;
+  box-shadow: 0 2px 6px rgba(28, 93, 206, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.80);
+}
+.topbar-title {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   PRIMARY BUTTON — more vivid
+   ══════════════════════════════════════════════════════════════ */
+.btn-primary,
+.search-btn {
+  background: linear-gradient(140deg, #1d60d6, #1244a6);
+  box-shadow: 0 10px 28px rgba(28, 93, 206, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+.btn-primary:hover:not(:disabled),
+.search-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 36px rgba(28, 93, 206, 0.36);
+}
+.search-mode-btn.active,
+.signals-timeframe-btn.active,
+.signals-toggle.active {
+  background: linear-gradient(140deg, #1d60d6, #1244a6);
+  box-shadow: 0 10px 24px rgba(28, 93, 206, 0.26);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   KICKER LABELS — cleaner brand color
+   ══════════════════════════════════════════════════════════════ */
+.kicker {
+  color: var(--cyan);
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  font-size: 10px;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   DETAIL CARDS — white elevated surfaces
+   ══════════════════════════════════════════════════════════════ */
+.detail-card {
+  border-radius: 18px;
+  background: var(--surface-strong);
+  border: 1px solid rgba(15, 27, 45, 0.07);
+  box-shadow: 0 4px 12px rgba(12, 24, 48, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  padding: 18px 20px;
+}
+.reason-card {
+  border-radius: 22px;
+  border-color: rgba(70, 120, 200, 0.10);
+  box-shadow: 0 14px 38px rgba(12, 24, 48, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   NEWS CARDS — hover lift
+   ══════════════════════════════════════════════════════════════ */
+.news-card {
+  border-radius: 20px;
+  border-color: rgba(70, 120, 200, 0.09);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.news-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 40px rgba(12, 24, 48, 0.10);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   MISC — small polish items
+   ══════════════════════════════════════════════════════════════ */
+.settings-panel {
+  border-radius: var(--radius-xl);
+  border-color: rgba(70, 120, 200, 0.10);
+  box-shadow: 0 18px 50px rgba(12, 24, 48, 0.09);
+}
+.signals-shell {
+  border-radius: var(--radius-xl);
+  border-color: rgba(70, 120, 200, 0.11);
+  box-shadow: 0 22px 60px rgba(12, 24, 48, 0.09);
+}
+.market-graphic-wrap {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(228, 242, 255, 0.90) 100%);
+  border-color: rgba(28, 93, 206, 0.08);
+}
+.market-highlight {
+  border-radius: 18px;
+  background: linear-gradient(160deg, #ffffff 0%, var(--surface-muted) 100%);
+  box-shadow: 0 4px 10px rgba(12, 24, 48, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.88);
+}
+.ss-item {
+  padding: 16px 18px;
+}
+.ss-item strong {
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+.ss-item span {
+  font-size: 9.5px;
+  letter-spacing: 0.11em;
+}
+.sidebar-brand {
+  padding: 26px 22px 22px;
+}
+.brand-name {
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+
+/* Pulsing live dot */
+@keyframes connPulsePremium {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(86, 211, 157, 0.16); }
+  50%       { box-shadow: 0 0 0 7px rgba(86, 211, 157, 0.06); }
+}
+.conn-live .conn-dot {
+  animation: connPulsePremium 2.4s ease-in-out infinite;
+}
+
+/* ── Error bar ─────────────────────────────────────────────── */
+.error-bar {
+  border-radius: 20px;
+  border-left: 4px solid var(--red);
+}
+
+/* ── Search dropdown shadow ────────────────────────────────── */
+.search-dropdown,
+.search-dropdown-pro {
+  box-shadow: 0 26px 60px rgba(12, 24, 48, 0.14);
+}
+
 

@@ -1435,7 +1435,9 @@ async function fetchNseFundamentals(stock) {
       referer: `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`,
       "x-requested-with": "XMLHttpRequest",
     },
-    timeoutMs: Math.max(config.httpTimeoutMs, 10_000),
+    // NSE API requires a valid session cookie from a browser visit; from US Netlify servers it returns
+    // 403/401. Use a short timeout so it fails fast and Screener.in/Moneycontrol stay the primary path.
+    timeoutMs: 3_000,
   });
 
   const extracted = finalizeFundamentals(symbol, {

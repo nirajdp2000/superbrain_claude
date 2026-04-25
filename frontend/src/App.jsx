@@ -60,6 +60,22 @@ function fmtAnalysisTimeframe(value = "") {
   return fmtTag(value);
 }
 
+// Format an ISO timestamp as HH:MM:SS IST (UTC+5:30).
+function fmtAsOf(isoStr) {
+  if (!isoStr) return "--";
+  try {
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return "--";
+    const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+    const hh = String(ist.getUTCHours()).padStart(2, "0");
+    const mm = String(ist.getUTCMinutes()).padStart(2, "0");
+    const ss = String(ist.getUTCSeconds()).padStart(2, "0");
+    return `${hh}:${mm}:${ss} IST`;
+  } catch {
+    return "--";
+  }
+}
+
 function candlestickQualityColor(value = "") {
   const normalized = String(value || "").trim().toLowerCase();
   if (normalized === "ultra") return "cyan";
@@ -317,6 +333,29 @@ function ConnectionBanner({ info, quickConnect }) {
       ) : (
         <span className="conn-source">Live</span>
       )}
+    </div>
+  );
+}
+
+// Phase 1.7 — snapshot freshness banner.
+// Shows when data was captured, the short snapshot ID, and a ⟳ Refresh button.
+function AsOfBanner({ asOf, snapshotId, onRefresh, loading }) {
+  if (!asOf) return null;
+  return (
+    <div className="aof-banner" aria-label="Data freshness">
+      <span className="aof-time">Data as of {fmtAsOf(asOf)}</span>
+      {snapshotId
+        ? <span className="aof-snap">· Snapshot {String(snapshotId).slice(-7)}</span>
+        : null}
+      <button
+        type="button"
+        className="aof-refresh"
+        onClick={onRefresh}
+        disabled={loading}
+        aria-label="Refresh data"
+      >
+        {loading ? "…" : "⟳ Refresh"}
+      </button>
     </div>
   );
 }
@@ -835,13 +874,7 @@ function ResearchQualityCard({ focus, dashboard }) {
       </div>
       <div className="quality-note">
         <strong>{credibilityInsight(focus)}</strong>
-        <p>{dashboard?.disclaimer || "This output is a research aid. Confirm liquidity, price, and execution conditions before trading."}</p>
       </div>
-      <ul className="quality-list">
-        <li>Prefer ideas where price, fundamentals, and news all align.</li>
-        <li>Use verified or official headlines over single-source narratives.</li>
-        <li>Let market regime shape position size, not just direction.</li>
-      </ul>
     </div>
   );
 }
@@ -2298,7 +2331,7 @@ function IndiaIntelPanel({ focus, dashboard }) {
 function Sidebar({ dashboard, onFocus, activeTab, setActiveTab }) {
   const regime = dashboard?.marketContext?.regime || "--";
   const riskOn = dashboard?.marketContext?.riskOnScore;
-  const tabs = ["Verdict", "AI Report", "Evidence", "Options", "Adv. Technical", "Frameworks", "India Intel", "Long Term", "Market", "Leaders", "News", "Signal Radar"];
+  const tabs = ["Verdict", "AI Report", "Evidence", "Options", "Adv. Technical", "Frameworks", "India Intel", "Long Term", "Market", "News", "Signal Radar"];
 
   return (
     <aside className="sidebar">
@@ -2373,6 +2406,10 @@ export default function App() {
   const allStrategies = analysisResult?.found ? (analysisResult.allStrategies || []) : [];
   const strategyConsensus = analysisResult?.found ? (analysisResult.strategyConsensus || null) : null;
   const strategySelection = analysisResult?.found ? (analysisResult.strategySelection || null) : null;
+  // Phase 1.7 — snapshot freshness for the asOf banner.
+  // Prefer the /api/ask snapshot's asOf; fall back to dashboard's captured time.
+  const dataSnapshotId = analysisResult?.snapshotId ?? null;
+  const dataAsOf = analysisResult?.asOf ?? dashboard?.asOf ?? dashboard?.generatedAt ?? null;
 
   async function loadDashboard(preserve = false) {
     setDashLoading(true);
@@ -2407,7 +2444,7 @@ export default function App() {
     setRecentAsks(merged);
   }
 
-  async function runAsk(query, symbol = "", companyName = "") {
+  async function runAsk(query, symbol = "", companyName = "", { forceRefresh = false } = {}) {
     const trimmed = String(query || "").trim();
     if (!trimmed) {
       return;
@@ -2422,7 +2459,12 @@ export default function App() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           query: trimmed,
+          // Pass explicit symbol so backend skips freetext extraction (faster,
+          // more accurate — avoids APOLLO/APOLLOHOSP ambiguity).
+          symbol: symbol || undefined,
           includeAllStrategies: true,
+          // forceRefresh bypasses the Blobs snapshot cache (Phase 1.4/1.7).
+          forceRefresh: forceRefresh || undefined,
         }),
       });
 
@@ -2519,6 +2561,24 @@ export default function App() {
             </button>
           </div>
         </header>
+        {/* Phase 1.7 — snapshot freshness banner */}
+        <AsOfBanner
+          asOf={dataAsOf}
+          snapshotId={dataSnapshotId}
+          loading={askLoading || dashLoading}
+          onRefresh={() => {
+            if (analysisResult?.found && analysisResult.symbol) {
+              runAsk(
+                `Analyze ${analysisResult.symbol}`,
+                analysisResult.symbol,
+                analysisResult.companyName,
+                { forceRefresh: true },
+              );
+            } else {
+              loadDashboard(true);
+            }
+          }}
+        />
 
         <div className="main-scroll">
           <section className="search-section">
@@ -2527,7 +2587,6 @@ export default function App() {
                 <div className="search-copy">
                   <Kicker>Ask Superbrain</Kicker>
                   <h1>AI research cockpit for Indian equities.</h1>
-                  <p>Ask one natural-language question and Superbrain now shows the full cross-strategy stack with evidence, not just a single swing or long-term bias.</p>
                 </div>
                 <SearchVisualPanel dashboard={dashboard} focus={focus} />
               </div>
@@ -2560,28 +2619,6 @@ export default function App() {
                 </div>
               ) : null}
             </div>
-          </section>
-
-          <section className="hero-grid">
-            <div className="hero-card hero-card-summary">
-              <div className="hero-card-head">
-                <div>
-                  <Kicker>Decision Overview</Kicker>
-                  <h2>{focus?.symbol || "Market overview"}</h2>
-                </div>
-                {focus?.verdict ? <Pill color={verdictColor(focus.verdict)}>{fmtVerdict(focus.verdict)}</Pill> : <Badge>Research live</Badge>}
-              </div>
-              <p className="hero-muted">
-                {answer || focus?.recommendation?.summary || "Use the tabs below to move from headline verdict to evidence, long-term context, market regime, and signal scans."}
-              </p>
-              <div className="hero-stats">
-                <StatBox label="Average confidence" value={fmt(dashboard?.summary?.avgConfidence, "%", 0)} sub="across coverage" />
-                <StatBox label="Buy setups" value={dashboard?.summary?.buySignals || 0} sub="current dashboard" color="green" />
-                <StatBox label="Sell setups" value={dashboard?.summary?.sellSignals || 0} sub="current dashboard" color="red" />
-              </div>
-            </div>
-            <MarketGraphic dashboard={dashboard} focus={focus} />
-            <ResearchQualityCard focus={focus} dashboard={dashboard} />
           </section>
 
           {error ? <div className="error-bar">{error}</div> : null}
@@ -2638,7 +2675,27 @@ export default function App() {
           ) : null}
 
           <div className="tab-content">
-            {activeTab === "Verdict" ? <VerdictCard focus={focus} answer={answer} disclaimer={dashboard?.disclaimer} allStrategies={allStrategies} strategyConsensus={strategyConsensus} strategySelection={strategySelection} /> : null}
+            {activeTab === "Verdict" ? (
+              <>
+                <section className="hero-grid">
+                  <div className="hero-card hero-card-summary">
+                    <div className="hero-card-head">
+                      <div>
+                        <Kicker>Decision Overview</Kicker>
+                        <h2>{focus?.symbol || "Market overview"}</h2>
+                      </div>
+                      {focus?.verdict ? <Pill color={verdictColor(focus.verdict)}>{fmtVerdict(focus.verdict)}</Pill> : <Badge>Research live</Badge>}
+                    </div>
+                    <p className="hero-muted">
+                      {answer || focus?.recommendation?.summary || "Search any Indian stock to see the full cross-strategy verdict and evidence stack."}
+                    </p>
+                  </div>
+                  <MarketGraphic dashboard={dashboard} focus={focus} />
+                  <ResearchQualityCard focus={focus} dashboard={dashboard} />
+                </section>
+                <VerdictCard focus={focus} answer={answer} disclaimer={dashboard?.disclaimer} allStrategies={allStrategies} strategyConsensus={strategyConsensus} strategySelection={strategySelection} />
+              </>
+            ) : null}
             {activeTab === "AI Report" ? <GodLevelReportPanel focus={focus} /> : null}
             {activeTab === "Evidence" ? <ReasonPanel focus={focus} answer={answer} allStrategies={allStrategies} strategyConsensus={strategyConsensus} strategySelection={strategySelection} /> : null}
             {activeTab === "Options" ? <OptionsIntelPanel focus={focus} /> : null}
@@ -2647,7 +2704,6 @@ export default function App() {
             {activeTab === "India Intel" ? <IndiaIntelPanel focus={focus} dashboard={dashboard} /> : null}
             {activeTab === "Long Term" ? <LongTermPanel focus={focus} /> : null}
             {activeTab === "Market" ? <MarketPanel dashboard={dashboard} /> : null}
-            {activeTab === "Leaders" ? <LeadersPanel leaders={dashboard?.leaders || []} onFocus={focusSymbol} /> : null}
             {activeTab === "News" ? <NewsPanel focus={focus} dashboard={dashboard} /> : null}
             {activeTab === "Signal Radar" ? <TopSignalsTab onFocus={focusSymbol} /> : null}
           </div>

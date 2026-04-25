@@ -35,8 +35,10 @@ const NEWS_SOURCES = [
   { name: "RBI Press Releases", url: "https://www.rbi.org.in/rss/PressReleaseRss.xml", credibility: 0.98, tier: "official" },
   { name: "SEBI Updates", url: "https://www.sebi.gov.in/sebirss.xml", credibility: 0.97, tier: "official" },
   { name: "PIB Economy", url: "https://www.pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3", credibility: 0.95, tier: "official" },
-  { name: "NSE Corporate Announcements", url: "https://www.nseindia.com/rss/corporate-announcements.xml", credibility: 0.98, tier: "official" },
-  { name: "BSE Corporate Announcements", url: "https://www.bseindia.com/xml-data/rss/ann.aspx", credibility: 0.97, tier: "official" },
+  // NSE/BSE RSS endpoints are geo-restricted from US-hosted servers; use a short timeout so they
+  // fail fast and don't block the rest of the pipeline. Results degrade gracefully to [].
+  { name: "NSE Corporate Announcements", url: "https://www.nseindia.com/rss/corporate-announcements.xml", credibility: 0.98, tier: "official", timeoutMs: 1500 },
+  { name: "BSE Corporate Announcements", url: "https://www.bseindia.com/xml-data/rss/ann.aspx", credibility: 0.97, tier: "official", timeoutMs: 1500 },
 ];
 
 const PUBLISHER_CREDIBILITY = new Map([
@@ -483,6 +485,7 @@ async function fetchSource(source) {
       headers: {
         accept: "application/rss+xml,application/xml,text/xml,text/html,*/*",
       },
+      timeoutMs: source.timeoutMs || 5000,
     });
 
     return parseFeed(xml)

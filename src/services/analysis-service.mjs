@@ -8,6 +8,13 @@ import { computeEnhancedFundamentalScore, classifyLynchCategory, reverseDAF, det
 import { enrichWithIndiaSignals, getUpcomingIndianEvents, getSectorRotationSignals, isBudgetSensitiveStock } from "./india-intelligence.mjs";
 import { enrichWithGodLevel, computeATRTargetsAndStops, computeConvictionScore, computeBayesianScenarios, getDynamicWeights } from "./godlevel-engine.mjs";
 
+// ── Phase 1 core modules ────────────────────────────────────────────────────
+// TRANSFORMATION_ROADMAP §5 Phase 1.1 / 1.2 / 1.4 / 1.6
+import { assembleSnapshot, serializeSnapshot, isSnapshotScored } from "../core/snapshot.mjs";
+import { getSnapshot, setSnapshot, pickSnapshotTtlSeconds, getUniverseScan } from "../core/snapshot-cache.mjs";
+import { verdict as verdictClassifier } from "../core/verdict.mjs";
+import * as prov from "../core/provenance.mjs";
+
 const SECTOR_FAIR_PE = {
   Technology: 28,
   Financials: 18,
@@ -2387,7 +2394,6 @@ function buildAnalysisRowFromBundle({
     ? (optionsBias === "BULLISH" && adjustedScore >= 58 ? "options_confirm_bullish"
       : optionsBias === "BEARISH" && adjustedScore <= 42 ? "options_confirm_bearish" : null)
     : null;
-  const verdict = classifyVerdict(adjustedScore, riskScore, newsSummary, eventExposure, strictVerification);
   const horizonDays = resolveHorizonDays(normalizedStrategy, bundle.horizonDays);
   const dataCoveragePreview = buildDataCoverage({
     strategy: normalizedStrategy,
@@ -2398,6 +2404,8 @@ function buildAnalysisRowFromBundle({
     newsSummary,
   });
   const optionsConfidenceBoost = optionsData?.available && verdictOverride ? 4 : 0;
+  // Confidence computed BEFORE verdict so verdict.mjs can apply per-strategy
+  // confidence thresholds (STRONG_CONFIDENCE_THRESHOLD etc.) — Principle #8.
   const confidence = clamp(
     summarizeConfidence(bundle.quote.source, newsSummary, bundle.fundamentals, eventExposure, strictVerification)
     - dataCoveragePreview.confidencePenalty
@@ -2405,6 +2413,19 @@ function buildAnalysisRowFromBundle({
     18,
     95,
   );
+  // Canonical verdict — the ONLY place in the codebase that emits verdict letters.
+  // TRANSFORMATION_ROADMAP Principle #8.
+  const verdictOut = verdictClassifier({
+    adjustedScore,
+    riskScore,
+    newsSummary,
+    eventExposure,
+    strictVerification,
+    strategy:   normalizedStrategy,
+    regime:     marketContext?.regime,
+    confidence,
+  });
+  const verdict = verdictOut.letter;
   const targets = buildTargets(adjustedScore, riskScore, bundle.quote.price, normalizedStrategy, verdict);
 
   return decorateRow({
@@ -2848,59 +2869,214 @@ export async function analyzeMarket(payload = {}) {
   };
 }
 
+/**
+ * Build a minimal leader-row shape from a fully-scored StockSnapshot.
+ * Shape is compatible with analyzeMarket().results[i] — same fields the
+ * LeadersPanel and MarketPanel read. Narrative fields (thesis, catalysts,
+ * risks) are absent from cached snapshots and fall back gracefully in the UI.
+ *
+ * TRANSFORMATION_ROADMAP §5 Phase 1.6 — internal helper.
+ * @param {import('../core/snapshot.mjs').StockSnapshot} snap
+ * @param {string} strategy
+ * @returns {Object}
+ */
+function _snapshotToLeaderRow(snap, strategy) {
+  const stratScore = snap.scores?.[strategy] || snap.scores?.swing || {};
+  const verdictLetter = stratScore.verdict?.letter || "HOLD";
+  const confidence = stratScore.verdict?.confidence ?? stratScore.confidence ?? 50;
+  const adjustedScore = stratScore.adjustedScore ?? 50;
+
+  return {
+    symbol:         snap.symbol,
+    companyName:    snap.companyName,
+    sector:         snap.sector         || "Unknown",
+    marketCapBand:  snap.marketCapBand  || "unknown",
+    isFnO:          Boolean(snap.isFnO),
+    exchange:       snap.exchange        || "NSE",
+    strategy,
+    verdict:        verdictLetter,
+    confidence,
+    adjustedScore,
+    score:          adjustedScore,
+    riskScore:      stratScore.riskScore ?? 50,
+    scoreBreakdown: stratScore.scoreBreakdown || {},
+    targets:        stratScore.targets        || {},
+    quote: {
+      price:     prov.unwrap(snap.price),
+      changePct: prov.unwrap(snap.changePct),
+      volume:    prov.unwrap(snap.volume),
+      open:      prov.unwrap(snap.open),
+      high:      prov.unwrap(snap.high),
+      low:       prov.unwrap(snap.low),
+      prevClose: prov.unwrap(snap.prevClose),
+      high52w:   prov.unwrap(snap.high52w),
+      low52w:    prov.unwrap(snap.low52w),
+      source:    snap.price?.source || "delayed",
+      asOf:      snap.asOf,
+    },
+    fundamentals:  prov.unwrap(snap.fundamentals)  || {},
+    technical:     prov.unwrap(snap.technical)     || {},
+    marketContext: prov.unwrap(snap.marketContext) || {},
+    verification: {
+      evidenceGrade:         "C",
+      marketSource:          snap.price?.source || "delayed",
+      headlineCount:         0,
+      verifiedHeadlineCount: 0,
+    },
+    recommendation: {
+      summary: `${verdictLetter.replace(/_/g, " ")} — ${confidence}% confidence`,
+      conviction: confidence >= 75 ? "High conviction" : confidence >= 60 ? "Measured" : "Low conviction",
+    },
+    thesis:    null,
+    catalysts: [],
+    risks:     [],
+    _fromCache:       true,
+    _cacheSnapshotId: snap.snapshotId,
+    _cacheAsOf:       snap.asOf,
+  };
+}
+
 export async function buildDashboard(query = {}) {
   const selectedSymbols = typeof query.symbols === "string" && query.symbols.trim()
     ? query.symbols.split(",").map((value) => value.trim()).filter(Boolean)
     : getDefaultWatchlist();
   const strategy = String(query.strategy || "swing");
+  // Lite mode: skip the heaviest optional enrichment to guarantee a sub-10 s
+  // response on cold start. Consumed via `?lite=true`.
+  const liteMode = query.lite === true || query.lite === "true";
 
-  const analysis = await analyzeMarket({
-    symbols: selectedSymbols,
-    strategy,
-    strictVerification: query.strictVerification !== "false",
-    horizonDays: resolveHorizonDays(strategy, query.horizonDays),
-    _returnBundles: true,
+  // ── Phase 1.6: Cache-first read for all requested symbols ─────────────────
+  // For each symbol check Netlify Blobs for a fully-scored snapshot (all 4
+  // strategies). Only run analyzeMarket for symbols NOT in cache (misses).
+  // This ensures Dashboard verdicts match the same snapshot as /api/ask.
+  const snapChecks = await Promise.all(
+    selectedSymbols.map((sym) => getSnapshot(sym).catch(() => null))
+  );
+
+  const snapshotHits = {};  // symbol → StockSnapshot
+  const missSymbols  = [];
+  selectedSymbols.forEach((sym, i) => {
+    const snap = snapChecks[i];
+    if (isSnapshotScored(snap)) {
+      snapshotHits[sym] = snap;
+    } else {
+      missSymbols.push(sym);
+    }
   });
 
-  let focus = analysis.results[0] || null;
-  let watchlist = analysis.results;
-  let marketWideOpportunities = null;
-  const focusBundle = analysis._bundles?.[0];
+  // ── Fresh analysis for cache-miss symbols ─────────────────────────────────
+  let freshAnalysis = null;
+  if (missSymbols.length > 0) {
+    freshAnalysis = await analyzeMarket({
+      symbols: missSymbols,
+      strategy,
+      strictVerification: query.strictVerification !== "false",
+      horizonDays: resolveHorizonDays(strategy, query.horizonDays),
+      _returnBundles: true,
+    });
+  }
 
+  // ── Macro context — prefer from fresh analysis; fallback when all cached ──
+  let marketContext, macroSignals, eventRadar, alerts, disclaimer;
+  if (freshAnalysis) {
+    marketContext = freshAnalysis.marketContext;
+    macroSignals  = freshAnalysis.macroSignals;
+    eventRadar    = freshAnalysis.eventRadar;
+    alerts        = freshAnalysis.alerts;
+    disclaimer    = freshAnalysis.disclaimer;
+  } else {
+    // All symbols cached — fetch market context + macro fresh to keep it live.
+    const [freshCtx, globalNews] = await Promise.all([
+      getMarketContext().catch(() => prov.unwrap(Object.values(snapshotHits)[0]?.marketContext) ?? {}),
+      getNewsIntelligence().catch(() => ({})),
+    ]);
+    marketContext = freshCtx;
+    macroSignals  = [...(globalNews.official || []), ...(globalNews.geopolitical || []), ...(globalNews.macro || [])]
+      .slice(0, 8)
+      .map((item) => ({
+        headline:          item.headline,
+        source:            item.source,
+        publishedAt:       item.publishedAt,
+        summary:           item.summary,
+        verificationCount: item.verificationCount,
+        official:          item.official,
+        tags:              item.tags || [],
+        url:               item.url,
+      }));
+    eventRadar  = globalNews.eventRadar || [];
+    alerts      = [];
+    disclaimer  = "This output is an analysis aid for the Indian market. It uses live and public data, but it cannot guarantee perfect accuracy or outcomes. Verify execution, liquidity, and your own risk limits before trading.";
+  }
+
+  // ── Build rows from cache hits + fresh results, sort by score ────────────
+  const cachedRows = Object.entries(snapshotHits).map(([, snap]) =>
+    _snapshotToLeaderRow(snap, strategy)
+  );
+  const freshRows = freshAnalysis?.results || [];
+
+  // Highest-confidence stock leads the list (becomes dashboard focus).
+  const allRows = [...cachedRows, ...freshRows].sort(
+    (a, b) => (b.adjustedScore || b.score || 0) - (a.adjustedScore || a.score || 0)
+  );
+
+  // ── Focus row + optional enrichment ───────────────────────────────────────
+  let focus    = allRows[0] || null;
+  let watchlist = allRows;
+
+  // Candles for enrichRowDeep: prefer from snapshot, fall back to fresh bundle.
+  const focusSnapHit = focus ? snapshotHits[focus.symbol] : null;
+  const focusFreshIdx = focus && !focusSnapHit
+    ? freshRows.findIndex((r) => r.symbol === focus.symbol)
+    : -1;
+  const focusCandles = focusSnapHit
+    ? (prov.unwrap(focusSnapHit.candles) || [])
+    : (freshAnalysis?._bundles?.[focusFreshIdx]?.candles || []);
+
+  let marketWideOpportunities = null;
   try {
     const { topSignalsService } = await import("./top-signals-service.mjs");
-    marketWideOpportunities = await topSignalsService.getOpportunitySnapshot(strategyToOpportunityTimeframe(strategy), 3);
+    marketWideOpportunities = await topSignalsService.getOpportunitySnapshot(
+      strategyToOpportunityTimeframe(strategy), 3
+    );
   } catch {
     marketWideOpportunities = null;
   }
 
   if (focus) {
-    focus = attachMarketWideContext(
-      await enrichRowDeep(focus, focusBundle?.candles || [], analysis.marketContext || {}),
-      marketWideOpportunities
-    );
-    watchlist = [focus, ...analysis.results.slice(1)];
+    const toEnrich = liteMode
+      ? focus
+      : await enrichRowDeep(focus, focusCandles, marketContext || {}).catch(() => focus);
+    focus     = attachMarketWideContext(toEnrich, marketWideOpportunities);
+    watchlist = [focus, ...allRows.slice(1)];
   }
 
+  // snapshotId/asOf for Phase 1.7 asOf banner (focus symbol's cache entry).
+  const focusSnap      = focus ? (snapshotHits[focus.symbol] ?? null) : null;
+  const focusSnapshotId = focusSnap?.snapshotId ?? null;
+  const focusAsOf      = focusSnap?.asOf ?? freshAnalysis?.generatedAt ?? new Date().toISOString();
+
   return {
-    generatedAt: analysis.generatedAt,
-    marketContext: analysis.marketContext,
+    generatedAt:           new Date().toISOString(),
+    snapshotId:            focusSnapshotId,   // Phase 1.7 — asOf banner
+    asOf:                  focusAsOf,         // Phase 1.7 — asOf banner
+    marketContext,
     focus,
     marketWideOpportunities,
-    leaders: watchlist.slice(0, 4),
+    leaders:   watchlist.slice(0, 4),
     watchlist,
-    alerts: analysis.alerts,
-    macroSignals: analysis.macroSignals,
-    eventRadar: analysis.eventRadar,
+    alerts,
+    macroSignals,
+    eventRadar,
     summary: {
       totalCovered: watchlist.length,
-      buySignals: watchlist.filter((row) => row.verdict === "BUY" || row.verdict === "STRONG_BUY").length,
-      sellSignals: watchlist.filter((row) => row.verdict === "SELL" || row.verdict === "STRONG_SELL").length,
+      buySignals:   watchlist.filter((r) => r.verdict === "BUY"  || r.verdict === "STRONG_BUY").length,
+      sellSignals:  watchlist.filter((r) => r.verdict === "SELL" || r.verdict === "STRONG_SELL").length,
       avgConfidence: watchlist.length
-        ? Number((watchlist.reduce((sum, row) => sum + row.confidence, 0) / watchlist.length).toFixed(1))
+        ? Number((watchlist.reduce((s, r) => s + (r.confidence || 0), 0) / watchlist.length).toFixed(1))
         : 0,
     },
-    disclaimer: analysis.disclaimer,
+    disclaimer,
+    _lite: liteMode,
   };
 }
 
@@ -2972,9 +3148,27 @@ export async function getStockIntelligenceAllStrategies(payload = {}) {
   const rawSymbol = String(payload.symbol || "").trim().toUpperCase();
   const requestedStrategy = payload.strategy ? normalizeAnalysisStrategy(payload.strategy) : "";
   const strictVerification = payload.strictVerification !== false;
+
+  // Resolve the symbol BEFORE checking the cache so we use the canonical
+  // ticker (e.g. "RELIANCE") not the raw input (which could be alias/ISIN).
+  // Cache writes always use the canonical symbol; checking with a non-canonical
+  // key would always miss.
   const resolved = await resolveStockAny(rawSymbol);
   const symbol = resolved?.symbol || rawSymbol;
   const stock = resolved || await resolveStockAny(symbol);
+
+  // ── Phase 1.4: Snapshot cache read-through ──────────────────────────────────
+  // Check Netlify Blobs first. If we have a fully-scored, unexpired snapshot
+  // for this symbol, we can skip bundle fetching on in-memory hits (_bundle
+  // present) and avoid redundant Blobs re-writes on all hits.
+  let _cachedSnapshot = null;
+  if (!payload.forceRefresh) {
+    try {
+      _cachedSnapshot = await getSnapshot(symbol);
+    } catch (_cacheErr) {
+      // Cache unavailable (local dev without netlify-cli) — proceed normally.
+    }
+  }
 
   if (!stock) {
     const suggestions = await searchAnyUniverse(symbol, 5);
@@ -2989,16 +3183,28 @@ export async function getStockIntelligenceAllStrategies(payload = {}) {
     };
   }
 
-  const [marketContext, symbolNews, globalNews, bundle] = await Promise.all([
-    getMarketContext(),
-    getNewsForSymbols([stock.symbol], [stock], {
-      includeTargeted: payload.includeTargetedNews !== false,
-      targetedLimit: Math.max(1, Number(payload.newsTargetedLimit || 1)),
-      forceRefresh: payload.forceNewsRefresh === true,
-    }),
-    getNewsIntelligence(),
-    resolveStockBundle(stock),
-  ]);
+  // Prefer cached bundle when available (avoids redundant network round-trips).
+  // _bundle is present on in-memory hits but stripped from Blobs serialization.
+  const _snapshotBundle = _cachedSnapshot?._bundle;
+
+  const fetchStart = Date.now();
+  const [marketContext, symbolNews, globalNews, bundle] = _snapshotBundle
+    ? [
+        prov.unwrap(_cachedSnapshot.marketContext) ?? await getMarketContext(),
+        (prov.unwrap(_cachedSnapshot.newsDigest)?.symbolItems) ?? null,
+        (prov.unwrap(_cachedSnapshot.newsDigest)?.global) ?? await getNewsIntelligence(),
+        _snapshotBundle,
+      ]
+    : await Promise.all([
+        getMarketContext(),
+        getNewsForSymbols([stock.symbol], [stock], {
+          includeTargeted: payload.includeTargetedNews !== false,
+          targetedLimit: Math.max(1, Number(payload.newsTargetedLimit || 1)),
+          forceRefresh: payload.forceNewsRefresh === true,
+        }),
+        getNewsIntelligence(),
+        resolveStockBundle(stock),
+      ]);
 
   if (!bundle?.quote) {
     const suggestions = await searchAnyUniverse(symbol, 5);
@@ -3026,6 +3232,45 @@ export async function getStockIntelligenceAllStrategies(payload = {}) {
       strictVerification,
     }))
     .filter(Boolean);
+
+  // ── Phase 1.4: Persist scored snapshot to Netlify Blobs ───────────────────
+  // Build StockSnapshot from fetched data, attach all-strategy scores, write
+  // to "snapshots" Blobs store. Subsequent buildDashboard calls read this
+  // (Phase 1.6) so verdicts are consistent across Ask tab and Dashboard.
+  // Fire-and-forget — do not await so the response is not delayed.
+  let _freshSnapshot = null;
+  if (!isSnapshotScored(_cachedSnapshot)) {
+    try {
+      const freshSnapshot = assembleSnapshot(
+        symbol, stock, bundle, marketContext, symbolNews, globalNews, fetchStart,
+      );
+      freshSnapshot.scores = Object.fromEntries(
+        strategyRows.map((row) => [
+          row.strategy,
+          {
+            strategy:       row.strategy,
+            adjustedScore:  row.adjustedScore,
+            riskScore:      row.scoreBreakdown?.risk ?? 50,
+            scoreBreakdown: row.scoreBreakdown,
+            verdict:        { letter: row.verdict, confidence: row.confidence },
+            targets:        row.targets,
+            _row:           row,
+          },
+        ]),
+      );
+      _freshSnapshot = freshSnapshot;
+      setSnapshot(symbol, serializeSnapshot(freshSnapshot), pickSnapshotTtlSeconds())
+        .catch((err) => console.warn("[snapshot-cache] write failed:", err?.message));
+    } catch (_snapErr) {
+      console.warn("[snapshot] cache build failed for", symbol, _snapErr?.message);
+    }
+  }
+
+  // Resolved snapshot for snapshotId/asOf in response (Phase 1.7 banner).
+  // Prefer the fresh snapshot when we just built one (i.e. the cached one was
+  // missing or unscored). Otherwise the asOf banner would show stale capture
+  // time even though we just re-fetched the data.
+  const _resolvedSnapshot = _freshSnapshot ?? _cachedSnapshot;
 
   const primarySelection = choosePrimaryStrategyRow(strategyRows, requestedStrategy);
   const primaryBase = primarySelection.row || strategyRows[0] || null;
@@ -3070,6 +3315,8 @@ export async function getStockIntelligenceAllStrategies(payload = {}) {
   return {
     found: true,
     generatedAt: new Date().toISOString(),
+    snapshotId: _resolvedSnapshot?.snapshotId ?? null,   // Phase 1.7 — asOf banner
+    asOf:       _resolvedSnapshot?.asOf ?? new Date().toISOString(),
     symbol: enrichedPrimary.symbol,
     companyName: enrichedPrimary.companyName,
     strategy: primaryBase.strategy,
@@ -3130,6 +3377,7 @@ export async function askSuperbrain(payload = {}) {
       strategy,
       horizonDays: resolveHorizonDays(strategy, payload.horizonDays),
       strictVerification: payload.strictVerification !== false,
+      forceRefresh: payload.forceRefresh === true,
     });
   }
 
@@ -3139,5 +3387,9 @@ export async function askSuperbrain(payload = {}) {
     matchedStrategies: strategyContext.matchedStrategies,
     horizonDays: resolveHorizonDays(strategy, payload.horizonDays),
     strictVerification: payload.strictVerification !== false,
+    // Phase 1.7: propagate freshness-banner Refresh button intent so the
+    // snapshot cache is bypassed end-to-end. Without this the Refresh button
+    // silently no-ops on cache hits.
+    forceRefresh: payload.forceRefresh === true,
   });
 }

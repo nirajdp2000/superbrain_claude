@@ -14,3 +14,50 @@
   targetPort = 5173
   port = 8888
   autoLaunch = false
+
+# ── Netlify Scheduled Functions ─────────────────────────────────────────────
+# TRANSFORMATION_ROADMAP §0.5.2 + §5 Phase 2 / Phase 1.5 pre-req
+#
+# DISABLED until function files exist under netlify/functions/.
+# Currently only refresh-upstox-token.mjs and server.mjs are implemented;
+# scheduling missing function names causes Netlify build warnings and
+# wastes platform quota with no-op invocations.
+#
+# When implementing, create the file at netlify/functions/<name>.mjs and
+# uncomment the matching block. Cron: All times UTC. IST = UTC+5:30.
+# Each function has a 15-minute background timeout (vs 10s for HTTP functions).
+# Functions write to Netlify Blobs stores defined in snapshot-cache.mjs.
+#
+# Until then, top-signals-service.mjs gracefully falls back to live scans
+# (see getUniverseScan() try/catch in that file).
+
+# # Pre-compute Signal Radar universe every 15 min during market hours.
+# # Writes to Blobs store "universe-scans" key "scan:{strategy}".
+# # Replaces quickScore in top-signals-service.mjs (Phase 1.5).
+# [functions."pre-compute-universe"]
+#   schedule = "*/15 3-10 * * 1-5"
+#
+# # Ingest NSE FII/DII net flows daily at 6 PM IST (12:30 UTC).
+# [functions."ingest-fii-dii"]
+#   schedule = "30 12 * * 1-5"
+#
+# # Ingest participant-wise F&O OI daily at 7 PM IST (13:30 UTC).
+# [functions."ingest-participant-oi"]
+#   schedule = "30 13 * * 1-5"
+#
+# # Refresh F&O ban list every 15 min during market hours (09:15–15:30 IST).
+# [functions."ingest-fno-ban"]
+#   schedule = "*/15 3-10 * * 1-5"
+#
+# # Ingest NSE delivery-% (bhavdata) nightly at 8 PM IST (14:30 UTC).
+# [functions."ingest-delivery-pct"]
+#   schedule = "30 14 * * 1-5"
+#
+# # Ingest BSE+NSE bulk/block deals daily at 6:30 PM IST (13:00 UTC).
+# [functions."ingest-bulk-deals"]
+#   schedule = "0 13 * * 1-5"
+#
+# # Ingest 10-year fundamentals from Screener.in nightly at 8:30 PM IST (15:00 UTC).
+# # Rate-limited: max 20 req/min with 3-s sleep between batches.
+# [functions."ingest-fundamentals"]
+#   schedule = "0 15 * * 1-5"

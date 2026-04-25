@@ -1,6 +1,8 @@
 import { analyzeMarket } from "./analysis-service.mjs";
 import { getQuotes } from "./market-service.mjs";
 import { getBroadEquityUniverse } from "./broad-universe-service.mjs";
+// Phase 1.5: read pre-computed universe scans from Netlify Blobs
+import { getUniverseScan } from "../core/snapshot-cache.mjs";
 
 function clamp(value, min = 0, max = 100) {
   return Math.max(min, Math.min(max, value));
@@ -459,6 +461,19 @@ class TopSignalsService {
 
     if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
       return cached.data;
+    }
+
+    // Phase 1.5: prefer pre-computed universe scan from Netlify Blobs.
+    // The `pre-compute-universe` scheduled function writes these during market
+    // hours (Phase 2). On a hit we skip the broad quote sweep entirely.
+    try {
+      const preComputed = await getUniverseScan(strategy);
+      if (preComputed?.results?.length > 0) {
+        this.cache.set(cacheKey, { data: preComputed, timestamp: Date.now() });
+        return preComputed;
+      }
+    } catch (_blobErr) {
+      // Blobs unavailable (local dev) — fall through to live scan.
     }
 
     const broadUniverse = await this.getScanUniverse();
