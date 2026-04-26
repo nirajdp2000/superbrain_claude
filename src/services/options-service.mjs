@@ -86,11 +86,17 @@ export async function getIndiaVix() {
 }
 
 function classifyVix(vix) {
+  // India VIX calibration (different from CBOE VIX):
+  //   India VIX normal range: 14–18  (not 12–15 like S&P VIX)
+  //   India VIX elevated:     18–22
+  //   India VIX high:         22–30
+  //   India VIX extreme:      > 30  (crisis levels: COVID March 2020 hit ~86)
   if (!vix) return "UNKNOWN";
   if (vix > 30) return "EXTREME_FEAR";
-  if (vix > 20) return "HIGH_FEAR";
-  if (vix > 15) return "MODERATE";
-  if (vix > 12) return "CALM";
+  if (vix > 22) return "HIGH_FEAR";
+  if (vix > 17) return "ELEVATED";
+  if (vix > 13) return "MODERATE";
+  if (vix > 10) return "CALM";
   return "EXTREME_COMPLACENCY";
 }
 
@@ -112,7 +118,8 @@ export async function getOptionsChain(symbol = "NIFTY") {
     const raw = await fetchJson(url, { headers: NSE_HEADERS, timeout: 10000 });
     const records = raw?.records?.data || [];
     const expiryDates = raw?.records?.expiryDates || [];
-    const underlyingValue = safeNum(raw?.records?.underlyingValue) || safeNum(raw?.filtered?.IV);
+    // `filtered.IV` is the Implied Volatility field, NOT a price — never use it as spot
+    const underlyingValue = safeNum(raw?.records?.underlyingValue) || null;
     const spotPrice = underlyingValue;
 
     if (!records.length) throw new Error("Empty options chain");
@@ -398,6 +405,28 @@ export async function enrichWithOptionsData(symbol, currentPrice) {
     ]);
 
     if (!optionsData || optionsData.source === "UNAVAILABLE") {
+      // Options chain failed (NSE API blocked from cloud, market closed, etc.)
+      // but India VIX via Yahoo Finance often still works. Return partial data
+      // so the Options tab shows VIX instead of a completely empty panel.
+      if (vixData?.vix) {
+        return {
+          available: true,
+          optionsChainAvailable: false,
+          vix: vixData.vix,
+          vixSignal: vixData.signal,
+          // India VIX: >22 = bearish for market, <14 = calm/complacent
+          optionsScore: vixData.vix > 22 ? 42 : vixData.vix < 14 ? 55 : 50,
+          directionalBias: "NEUTRAL",
+          summary: "NSE options chain data is unavailable from cloud servers (NSE API is geo-restricted). India VIX is shown below from Yahoo Finance. For full options chain data (PCR, max pain, OI walls), run the app locally or connect a proxy.",
+          pcr: null,
+          pcrSignal: null,
+          maxPainStrike: null,
+          maxPainDistance: null,
+          resistanceLevel: null,
+          supportLevel: null,
+          oiWalls: { call: [], put: [] },
+        };
+      }
       return { available: false, reason: "Options chain unavailable" };
     }
 
@@ -414,11 +443,13 @@ export async function enrichWithOptionsData(symbol, currentPrice) {
       if (Math.abs(mpDist) < 1) optionsScore += 5; // Near max pain = stability
     }
 
-    // VIX signal
+    // VIX signal — India VIX calibration (normal range 14–18, extreme > 30)
     let vixSignal = null;
     if (vixData?.vix) {
-      if (vixData.vix > 25) optionsScore -= 10; // High fear = risk off
-      if (vixData.vix < 13) optionsScore += 5;  // Low fear = calm market
+      if (vixData.vix > 30) optionsScore -= 15;      // Crisis fear
+      else if (vixData.vix > 22) optionsScore -= 10; // Elevated fear = risk off
+      else if (vixData.vix > 17) optionsScore -= 5;  // Slightly elevated
+      else if (vixData.vix < 12) optionsScore += 5;  // Very calm market (complacency risk)
       vixSignal = vixData.signal;
     }
 

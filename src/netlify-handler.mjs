@@ -1,6 +1,7 @@
 import { config, hasAdminToken, resolveAllowedOrigin } from "./config.mjs";
-import { getDefaultWatchlist } from "./data/universe.mjs";
+import { getDefaultWatchlist, getStockBySymbol } from "./data/universe.mjs";
 import { analyzeMarket, askSuperbrain, buildDashboard, getStockIntelligence } from "./services/analysis-service.mjs";
+import { dashboardCacheKey, getDashboardCache, setDashboardCache } from "./services/dashboard-cache.mjs";
 import { getMarketContext } from "./services/market-service.mjs";
 import { getNewsForSymbols, getNewsIntelligence } from "./services/news-service.mjs";
 import {
@@ -91,6 +92,48 @@ function notFoundResponse() {
   return jsonResponse({ error: "Not found" }, 404);
 }
 
+/**
+ * Build a minimal "loading" shell so /api/dashboard never returns 502/504.
+ * Used when buildDashboard exceeds the Netlify function timeout or throws.
+ * The client sees `_partial: true` and should retry in ~5 s — by then the
+ * background compute has warmed the Blob cache.
+ */
+function buildDashboardSkeleton(symbolList, strategy, errMessage = null) {
+  const rows = symbolList.map((sym) => {
+    const meta = getStockBySymbol(sym) || { symbol: sym, name: sym, sector: "" };
+    return {
+      symbol: meta.symbol,
+      companyName: meta.name,
+      sector: meta.sector,
+      verdict: "LOADING",
+      confidence: 0,
+      recommendation: { action: "LOADING", summary: "Live analysis warming up — refresh in a moment." },
+      _skeleton: true,
+    };
+  });
+  return {
+    generatedAt: new Date().toISOString(),
+    marketContext: null,
+    focus: rows[0] || null,
+    marketWideOpportunities: null,
+    leaders: rows.slice(0, 4),
+    watchlist: rows,
+    alerts: [],
+    macroSignals: [],
+    eventRadar: [],
+    summary: {
+      totalCovered: rows.length,
+      buySignals: 0,
+      sellSignals: 0,
+      avgConfidence: 0,
+    },
+    disclaimer: "Superbrain analysis is warming up. Refresh in a few seconds for live data.",
+    strategy,
+    _partial: true,
+    _message: errMessage || "Live analysis is warming up. Refresh in ~5 seconds.",
+  };
+}
+
 function resolveCallbackUrl(url) {
   const requestCallbackUrl = `${url.origin}/api/upstox/callback`;
   const isNetlifyPreview = url.hostname.endsWith(".netlify.app") && url.hostname.includes("--");
@@ -121,6 +164,7 @@ export async function handleNetlifyRequest(request) {
     deploymentMode: "netlify",
     siteOrigin,
     callbackUrl,
+    adminToken: config.adminToken,
   };
 
   try {
@@ -355,11 +399,28 @@ export async function handleNetlifyRequest(request) {
     }
 
     if (request.method === "GET" && pathname === "/api/v2/market-signals") {
+      // Hard 22 s timeout — scan self-bounds to 20s; 2s headroom to serialize
+      // before Netlify's 26s hard function limit.
+      // Returns 200 with `_warming: true` so the UI shows the warming notice.
       try {
-        const overview = await topSignalsService.getMarketOverview();
+        const overview = await Promise.race([
+          topSignalsService.getMarketOverview(),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("scan_timeout")), 22_000)),
+        ]);
+        // Pass through `_warming` / `_stale` from the service.
         return withCors(request, jsonResponse(overview));
       } catch (error) {
-        return withCors(request, jsonResponse({ error: error.message }, 500));
+        const isTimeout = error.message === "scan_timeout";
+        console.warn("[market-signals]", error.message);
+        return withCors(request, jsonResponse({
+          totalStocks: 0, totalAnalyzed: 0,
+          bullishCount: 0, bearishCount: 0, neutralCount: 0,
+          averageScore: 0,
+          marketSentiment: isTimeout ? "warming_up" : "unavailable",
+          lastUpdated: new Date().toISOString(),
+          _warming: isTimeout,
+          error: isTimeout ? null : error.message,
+        }, 200));
       }
     }
 
@@ -371,23 +432,31 @@ export async function handleNetlifyRequest(request) {
       if (!["bullish", "bearish"].includes(type)) {
         return withCors(request, jsonResponse({ error: "Type must be 'bullish' or 'bearish'" }, 400));
       }
-
       if (!["intraday", "swing", "short_term", "long_term"].includes(timeframe)) {
         return withCors(request, jsonResponse({ error: "Invalid timeframe" }, 400));
       }
-
       if (limit < 1 || limit > 50) {
         return withCors(request, jsonResponse({ error: "Limit must be between 1 and 50" }, 400));
       }
 
       try {
-        const result = type === "bullish"
-          ? await topSignalsService.getTopBullishStocks(timeframe, limit)
-          : await topSignalsService.getTopBearishStocks(timeframe, limit);
-
+        const result = await Promise.race([
+          type === "bullish"
+            ? topSignalsService.getTopBullishStocks(timeframe, limit)
+            : topSignalsService.getTopBearishStocks(timeframe, limit),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("scan_timeout")), 22_000)),
+        ]);
         return withCors(request, jsonResponse(result));
       } catch (error) {
-        return withCors(request, jsonResponse({ error: error.message }, 500));
+        const isTimeout = error.message === "scan_timeout";
+        console.warn("[top-signals]", error.message);
+        return withCors(request, jsonResponse({
+          stocks: [], timeframe, totalAnalyzed: 0,
+          [`${type}Found`]: 0, averageScore: 0,
+          lastUpdated: new Date().toISOString(),
+          _warming: isTimeout,
+          error: isTimeout ? null : error.message,
+        }, 200));
       }
     }
 
@@ -402,13 +471,74 @@ export async function handleNetlifyRequest(request) {
     }
 
     if (request.method === "GET" && pathname === "/api/dashboard") {
-      const dashboard = await buildDashboard({
-        symbols: searchParams.get("symbols") || "",
-        strategy: searchParams.get("strategy") || "swing",
-        horizonDays: searchParams.get("horizonDays") || undefined,
-        strictVerification: searchParams.get("strictVerification") || undefined,
+      const strategy = searchParams.get("strategy") || "swing";
+      // Cap to 6 symbols — but the *default* watchlist is 3 for cold-start speed.
+      const requestedSymbols = (searchParams.get("symbols") || "")
+        .split(",").map((s) => s.trim()).filter(Boolean).slice(0, 6);
+      const symbolList = requestedSymbols.length ? requestedSymbols : getDefaultWatchlist();
+      const rawSymbols = symbolList.join(",");
+      const liteMode = searchParams.get("lite") === "true";
+
+      // ── 1. Blob cache check (survives cold starts) ──────────────────────
+      const cKey = dashboardCacheKey(symbolList, strategy);
+      try {
+        const cached = await getDashboardCache(cKey);
+        if (cached) {
+          console.log("[dashboard] cache hit:", cKey);
+          return withCors(request, jsonResponse({ ...cached, _cached: true }));
+        }
+      } catch (cacheErr) {
+        console.warn("[dashboard] cache read failed:", cacheErr.message);
+      }
+
+      // ── 2. Compute with hard timeout (20 s = 6 s headroom before Netlify's 26 s) ─
+      const DASHBOARD_TIMEOUT_MS = liteMode ? 12_000 : 20_000;
+      let timedOut = false;
+      let timeoutId;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          timedOut = true;
+          reject(new Error("dashboard_timeout"));
+        }, DASHBOARD_TIMEOUT_MS);
       });
-      return withCors(request, jsonResponse(dashboard));
+
+      try {
+        const dashboard = await Promise.race([
+          buildDashboard({
+            symbols: rawSymbols,
+            strategy,
+            horizonDays: searchParams.get("horizonDays") || undefined,
+            strictVerification: searchParams.get("strictVerification") || undefined,
+            lite: liteMode,
+          }),
+          timeoutPromise,
+        ]);
+        clearTimeout(timeoutId);
+
+        // Persist for subsequent cold starts.
+        setDashboardCache(cKey, dashboard).catch((err) =>
+          console.warn("[dashboard] cache write failed:", err.message),
+        );
+
+        return withCors(request, jsonResponse(dashboard));
+      } catch (dashErr) {
+        clearTimeout(timeoutId);
+
+        // ── 3. Timeout path — return a skeleton so the UI NEVER sees 502/504 ─
+        // Strategy: 200 OK + `_partial: true` flag + skeleton rows built from
+        // the static universe. The frontend can show "loading live data…" and
+        // retry in ~5 s to hit the now-warming Blob cache.
+        if (timedOut) {
+          console.warn("[dashboard] timed out, returning skeleton for", rawSymbols);
+          const skeleton = buildDashboardSkeleton(symbolList, strategy);
+          return withCors(request, jsonResponse(skeleton));
+        }
+
+        // Non-timeout error: still degrade gracefully rather than 500.
+        console.error("[dashboard] build error:", dashErr?.message || dashErr);
+        const skeleton = buildDashboardSkeleton(symbolList, strategy, dashErr?.message);
+        return withCors(request, jsonResponse(skeleton));
+      }
     }
 
     if (request.method === "POST" && pathname === "/api/analyze") {
@@ -417,8 +547,35 @@ export async function handleNetlifyRequest(request) {
     }
 
     if (request.method === "POST" && pathname === "/api/ask") {
-      const answer = await askSuperbrain(await readJsonBody(request));
-      return withCors(request, jsonResponse(answer));
+      const body = await readJsonBody(request);
+      // Hard 20 s ceiling — same headroom as /api/dashboard. getStockIntelligenceAllStrategies
+      // runs up to 4 strategy passes + topSignals + enrichRowDeep and can exceed Netlify's
+      // 26 s kill-switch when upstream scrapers are slow.
+      let askTimedOut = false;
+      let askTimeoutId;
+      const askTimeout = new Promise((_, reject) => {
+        askTimeoutId = setTimeout(() => {
+          askTimedOut = true;
+          reject(new Error("ask_timeout"));
+        }, 20_000);
+      });
+      try {
+        const answer = await Promise.race([askSuperbrain(body), askTimeout]);
+        clearTimeout(askTimeoutId);
+        return withCors(request, jsonResponse(answer));
+      } catch (askErr) {
+        clearTimeout(askTimeoutId);
+        if (askTimedOut) {
+          return withCors(request, jsonResponse({
+            found: false,
+            timedOut: true,
+            query: body.query || "",
+            answer: "Analysis is taking too long — server is under load. Please try again in a moment.",
+            suggestions: [],
+          }, 200));  // 200 so the frontend receives the JSON, not a network error
+        }
+        throw askErr;
+      }
     }
 
     if (request.method === "GET" && pathname === "/api/news") {

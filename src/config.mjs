@@ -62,11 +62,12 @@ const isNetlifyRuntime = Boolean(
 // in Netlify Site settings.
 // ─────────────────────────────────────────────────────────
 const NETLIFY_DEFAULTS = {
-  publicSiteUrl: "https://superbrainai.netlify.app",
-  upstoxClientId: "4ec51c87-a099-4ade-b727-960817b31c94",
-  upstoxClientSecret: "n7qldsrvus",
+  publicSiteUrl: "https://stockbrain.netlify.app",
+  upstoxClientId: "0d671c2a-ba3f-40fb-b135-913455c1a26e",
+  upstoxClientSecret: "1stt6g9op7",
   adminToken: "superbrain-admin-2025",
   allowedOrigins: [
+    "https://stockbrain.netlify.app",
     "https://superbrainai.netlify.app",
     "http://localhost:3000",
     "http://localhost:5173",
@@ -108,7 +109,9 @@ export const config = {
   adminToken: process.env.SUPERBRAIN_ADMIN_TOKEN
     || (isNetlifyRuntime ? NETLIFY_DEFAULTS.adminToken : ""),
   tokenDbPath: path.resolve(process.cwd(), defaultTokenDbPath),
-  httpTimeoutMs: Math.max(1500, Number(process.env.SUPERBRAIN_HTTP_TIMEOUT_MS || 9000)),
+  // Netlify: use 4 s per HTTP call so slow scrapers fail fast within the
+  // 22-second dashboard budget. Locally default to 9 s for comfort.
+  httpTimeoutMs: Math.max(1500, Number(process.env.SUPERBRAIN_HTTP_TIMEOUT_MS || (isNetlifyRuntime ? 4000 : 9000))),
   upstoxProxyUrl: (process.env.SUPERBRAIN_UPSTOX_PROXY_URL ?? "").replace(/\/+$/, ""),
   tokenBlobStore: process.env.SUPERBRAIN_TOKEN_BLOB_STORE || "superbrain-upstox",
   upstox: {

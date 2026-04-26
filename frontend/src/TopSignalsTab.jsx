@@ -234,8 +234,9 @@ function SignalCard({ stock, type, onFocus }) {
 
       <div className="signal-card-tags">
         {stock.sector ? <span>{stock.sector}</span> : null}
-        {stock.evidenceGrade ? <span className="tag-evidence">Evidence {stock.evidenceGrade}</span> : null}
-        {stock.strictVerdict && stock.strictVerdict !== stock.radarVerdict ? <span>Core {String(stock.strictVerdict).replaceAll("_", " ")}</span> : null}
+        {stock._preScan ? <span className="tag-prescan" title="Momentum-only — deep AI analysis pending">⚡ Momentum</span> : null}
+        {stock.evidenceGrade && !stock._preScan ? <span className="tag-evidence">Evidence {stock.evidenceGrade}</span> : null}
+        {stock.strictVerdict && stock.strictVerdict !== stock.radarVerdict && !stock._preScan ? <span>Core {String(stock.strictVerdict).replaceAll("_", " ")}</span> : null}
         {stock.riskReward ? <span className="tag-rr">R:R {fmt(stock.riskReward)}:1</span> : null}
         {stock.executionReadiness === "READY FOR EXECUTION" ? <span className="tag-ready">✓ Ready</span> : null}
         {Number(stock.realTimeCount || 0) > 0 ? <span className="tag-news">{stock.realTimeCount} live</span> : null}
@@ -395,6 +396,7 @@ function EmptySignalState({ title, body }) {
 export default function TopSignalsTab({ onFocus }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [warming, setWarming] = useState(false);
   const [bullishStocks, setBullishStocks] = useState([]);
   const [bearishStocks, setBearishStocks] = useState([]);
   const [marketOverview, setMarketOverview] = useState(null);
@@ -414,6 +416,7 @@ export default function TopSignalsTab({ onFocus }) {
   async function fetchTopSignals() {
     setLoading(true);
     setError("");
+    setWarming(false);
 
     try {
       const [overviewResponse, bullishResponse, bearishResponse] = await Promise.all([
@@ -422,20 +425,22 @@ export default function TopSignalsTab({ onFocus }) {
         fetch(`/api/v2/top-signals?type=bearish&timeframe=${selectedTimeframe}&limit=10`),
       ]);
 
-      if (!overviewResponse.ok || !bullishResponse.ok || !bearishResponse.ok) {
-        throw new Error("Signal scan is temporarily unavailable.");
+      // All three now always return 200 (backend handles errors gracefully).
+      const overviewData = overviewResponse.ok ? await overviewResponse.json() : {};
+      const bullishData = bullishResponse.ok ? await bullishResponse.json() : { stocks: [] };
+      const bearishData = bearishResponse.ok ? await bearishResponse.json() : { stocks: [] };
+
+      // _warming: true means the server timed out but is working in the background.
+      // Show an informational message rather than a hard error.
+      const isWarming = Boolean(overviewData._warming || bullishData._warming || bearishData._warming);
+      setWarming(isWarming);
+
+      if (!isWarming && (overviewData.error || bullishData.error || bearishData.error)) {
+        setError(overviewData.error || bullishData.error || bearishData.error || "Signal scan failed.");
       }
 
-      const overviewData = await overviewResponse.json();
-      const bullishData = await bullishResponse.json();
-      const bearishData = await bearishResponse.json();
-
-      if (overviewData.error || bullishData.error || bearishData.error) {
-        throw new Error(overviewData.error || bullishData.error || bearishData.error);
-      }
-
-      setBullishStocks(bullishData.stocks || []);
-      setBearishStocks(bearishData.stocks || []);
+      setBullishStocks((bullishData.stocks || []).map(s => ({ ...s, _preScan: s._preScan || bullishData._preScanFallback })));
+      setBearishStocks((bearishData.stocks || []).map(s => ({ ...s, _preScan: s._preScan || bearishData._preScanFallback })));
       setMarketOverview({
         ...overviewData,
         totalStocks: overviewData.totalStocks || bullishData.totalAnalyzed || bearishData.totalAnalyzed || 0,
@@ -457,6 +462,17 @@ export default function TopSignalsTab({ onFocus }) {
   useEffect(() => {
     fetchTopSignals();
   }, [selectedTimeframe]);
+
+  // When the backend says it's warming up, silently retry after 20 s so the
+  // user sees real data as soon as the scan finishes without manual refresh.
+  const warmingRetryRef = useRef(null);
+  useEffect(() => {
+    if (warmingRetryRef.current) clearTimeout(warmingRetryRef.current);
+    if (warming && !loading) {
+      warmingRetryRef.current = setTimeout(fetchTopSignals, 20_000);
+    }
+    return () => { if (warmingRetryRef.current) clearTimeout(warmingRetryRef.current); };
+  }, [warming, loading]);
 
   useEffect(() => {
     if (autoRefresh) {
@@ -535,12 +551,19 @@ export default function TopSignalsTab({ onFocus }) {
         <p>The broad universe is pre-scanned first, then a smaller shortlist is deeply ranked with the full research stack. If no names clear the threshold, the panel stays empty instead of inventing example signals.</p>
       </div>
 
-      {error ? <div className="error-bar">{error}</div> : null}
+      {warming && !loading ? (
+        <div className="quality-note" style={{ borderColor: "var(--amber)", marginTop: "1rem" }}>
+          <strong>⏳ Radar warming up</strong>
+          <p>The signal scan is running in the background. On the first load it scans live quotes and ranks a shortlist — this takes 10-20 seconds. Results appear automatically and are cached for 5 minutes.</p>
+        </div>
+      ) : null}
+
+      {error && !warming ? <div className="error-bar">{error}</div> : null}
 
       {loading ? (
         <div className="signals-loading">
           <div className="spinner large" />
-          <p>Refreshing market signals...</p>
+          <p>Running live market scan — fetching quotes for 5000+ stocks…</p>
         </div>
       ) : (
         <div className="signals-board">

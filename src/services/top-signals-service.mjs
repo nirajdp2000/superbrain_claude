@@ -1,6 +1,7 @@
 import { analyzeMarket } from "./analysis-service.mjs";
-import { getQuotes } from "./market-service.mjs";
+import { getQuotesForScan } from "./market-service.mjs";
 import { getBroadEquityUniverse } from "./broad-universe-service.mjs";
+import { config } from "../config.mjs";
 // Phase 1.5: read pre-computed universe scans from Netlify Blobs
 import { getUniverseScan } from "../core/snapshot-cache.mjs";
 
@@ -16,7 +17,10 @@ class TopSignalsService {
   constructor() {
     this.cache = new Map();
     this.cacheTimeout = 3 * 60 * 1000;
-    this.deepDivePerSide = 40;
+    // 6 per side on Netlify: analyzeMarket is fully parallel so extra stocks
+    // add latency only for the slowest concurrent HTTP call. 6+6=12 unique
+    // stocks keeps the analysis within ~8s, well inside the 20s scan budget.
+    this.deepDivePerSide = config.isNetlifyRuntime ? 6 : 40;
   }
 
   mapTimeframeToStrategy(timeframe = "swing") {
@@ -267,13 +271,15 @@ class TopSignalsService {
     ].filter(Boolean).length;
     const momentumSupport = quickScore >= 67 && tradeability >= 8;
 
-    return adjustedScore >= 50
-      && technical >= 62
-      && macro >= 35
-      && risk <= 62
-      && confidence >= 40
-      && quickScore >= 58
-      && tradeability >= 2
+    // Thresholds intentionally relaxed for the scan (screener) path.
+    // Single-stock deep dive (/api/ask) applies stricter validation.
+    return adjustedScore >= 46
+      && technical >= 50       // was 62 — candles often limited on Netlify cold-start
+      && macro >= 28           // was 35
+      && risk <= 70            // was 62
+      && confidence >= 28      // was 40
+      && quickScore >= 52      // was 58
+      && tradeability >= -2    // was 2
       && (supportCount >= 1 || momentumSupport);
   }
 
@@ -295,12 +301,12 @@ class TopSignalsService {
     ].filter(Boolean).length;
     const momentumSupport = quickScore <= 33 && tradeability >= 8;
 
-    return adjustedScore <= 50
-      && technical <= 48
-      && confidence >= 48
-      && quickScore <= 40
-      && tradeability >= 2
-      && (risk >= 48 || macro <= 46)
+    return adjustedScore <= 54
+      && technical <= 52       // was 48
+      && confidence >= 28      // was 48
+      && quickScore <= 48      // was 40
+      && tradeability >= -2    // was 2
+      && (risk >= 44 || macro <= 48)
       && (supportCount >= 1 || momentumSupport);
   }
 
@@ -369,15 +375,21 @@ class TopSignalsService {
 
   radarVerdict(row, side = "bullish") {
     const score = side === "bullish" ? this.bullishRadarScore(row) : this.bearishRadarScore(row);
+    const quickScore = this.resolveQuickScore(row);
+    const tradeability = this.resolveTradeabilityScore(row);
 
     if (side === "bullish") {
-      if (row.verdict === "STRONG_BUY" || (this.bullishRadarConfluence(row) && score >= 100)) return "STRONG_BUY";
-      if (row.verdict === "BUY" || (this.bullishRadarConfluence(row) && score >= 58)) return "BUY";
+      if (row.verdict === "STRONG_BUY" || (this.bullishRadarConfluence(row) && score >= 75)) return "STRONG_BUY";
+      if (row.verdict === "BUY" || (this.bullishRadarConfluence(row) && score >= 30)) return "BUY";
+      // Momentum-only path: strong intraday move + tradeable → surface even if AI says HOLD
+      if (row.verdict === "HOLD" && quickScore >= 68 && tradeability >= 8) return "BUY";
       return "IGNORE";
     }
 
-    if (row.verdict === "STRONG_SELL" || (this.bearishRadarConfluence(row) && score >= 82)) return "STRONG_SELL";
-    if (row.verdict === "SELL" || (this.bearishRadarConfluence(row) && score >= 56)) return "SELL";
+    if (row.verdict === "STRONG_SELL" || (this.bearishRadarConfluence(row) && score >= 60)) return "STRONG_SELL";
+    if (row.verdict === "SELL" || (this.bearishRadarConfluence(row) && score >= 26)) return "SELL";
+    // Momentum-only bearish: strong down-day + tradeable → surface
+    if (row.verdict === "HOLD" && quickScore <= 32 && tradeability >= 8) return "SELL";
     return "IGNORE";
   }
 
@@ -455,13 +467,95 @@ class TopSignalsService {
       }));
   }
 
-  async runScan(strategy = "swing") {
-    const cacheKey = `scan:${strategy}`;
-    const cached = this.cache.get(cacheKey);
-
-    if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
-      return cached.data;
+  // ── Netlify Blobs persistence (survives cold starts) ─────────────────────
+  // We split the read into "fresh" (within TTL) and "stale" (expired but still
+  // present) so we can serve stale results immediately on cold start while a
+  // background refresh repopulates the cache.
+  async _blobGetRaw(key) {
+    if (!config.isNetlifyRuntime) return null;
+    try {
+      const { getStore } = await import("@netlify/blobs");
+      const store = getStore({ name: "superbrain-signals", consistency: "strong" });
+      return await store.get(key, { type: "json" });
+    } catch (err) {
+      console.warn(`[top-signals] blob read failed for ${key}:`, err?.message || err);
+      return null;
     }
+  }
+
+  async _blobGet(key) {
+    const raw = await this._blobGetRaw(key);
+    if (!raw?._expiresAt || Date.now() > raw._expiresAt) return null;
+    return raw.data;
+  }
+
+  async _blobGetStale(key, maxAgeMs = 60 * 60_000) {
+    const raw = await this._blobGetRaw(key);
+    if (!raw?.data || !raw?._expiresAt) return null;
+    // Only serve stale data younger than maxAgeMs past expiry.
+    if (Date.now() - raw._expiresAt > maxAgeMs) return null;
+    return raw.data;
+  }
+
+  async _blobSet(key, data, ttlMs = 5 * 60_000) {
+    if (!config.isNetlifyRuntime) return;
+    try {
+      const { getStore } = await import("@netlify/blobs");
+      const store = getStore({ name: "superbrain-signals", consistency: "strong" });
+      await store.set(key, JSON.stringify({ data, _expiresAt: Date.now() + ttlMs }));
+    } catch (err) {
+      console.warn(`[top-signals] blob write failed for ${key}:`, err?.message || err);
+    }
+  }
+
+  // Background refresh kept off the critical path. Multiple concurrent callers
+  // share the same in-flight promise so we never trigger duplicate scans.
+  _scheduleBackgroundRefresh(strategy) {
+    if (this._inFlightRefresh?.[strategy]) return;
+    if (!this._inFlightRefresh) this._inFlightRefresh = {};
+
+    this._inFlightRefresh[strategy] = this._performScan(strategy)
+      .then((data) => {
+        this.cache.set(`scan:${strategy}`, { data, timestamp: Date.now() });
+        return this._blobSet(`scan:${strategy}`, data);
+      })
+      .catch((err) => {
+        console.warn(`[top-signals] background refresh for ${strategy} failed:`, err?.message || err);
+      })
+      .finally(() => {
+        if (this._inFlightRefresh) delete this._inFlightRefresh[strategy];
+      });
+  }
+
+  // Empty placeholder result the caller can render while warming.
+  _buildWarmingPlaceholder(strategy) {
+    return {
+      strategy,
+      generatedAt: new Date().toISOString(),
+      universeCount: 0,
+      deepAnalyzed: 0,
+      overview: {
+        totalStocks: 0,
+        totalAnalyzed: 0,
+        bullishCount: 0,
+        bearishCount: 0,
+        neutralCount: 0,
+        averageScore: 0,
+        marketSentiment: "warming_up",
+        lastUpdated: new Date().toISOString(),
+        sectorRotation: [],
+        unusualActivity: [],
+      },
+      results: [],
+      _warming: true,
+    };
+  }
+
+  // The actual scan logic — separated so it can run on the critical path
+  // (locally) or as a background refresh (Netlify).
+  async _performScan(strategy = "swing") {
+    const t0 = Date.now();
+    console.log(`[top-signals] _performScan start strategy=${strategy}`);
 
     // Phase 1.5: prefer pre-computed universe scan from Netlify Blobs.
     // The `pre-compute-universe` scheduled function writes these during market
@@ -477,11 +571,25 @@ class TopSignalsService {
     }
 
     const broadUniverse = await this.getScanUniverse();
-    const quotes = await getQuotes(broadUniverse);
-    const minimumCoverage = Math.min(250, Math.max(25, Math.round(broadUniverse.length * 0.02)));
+    const t1 = Date.now();
+    console.log(`[top-signals]   universe=${broadUniverse.length} source=${broadUniverse[0]?.source} in ${t1 - t0}ms`);
+
+    // On Netlify use a 10 s quote budget so the remaining time goes to analysis.
+    // The parallel-Yahoo fallback inside getQuotesForScan handles the curated
+    // local list (which has no instrumentKey values for Upstox batch-fetching).
+    const quoteBudgetMs = config.isNetlifyRuntime ? 10_000 : 45_000;
+    const quotes = await getQuotesForScan(broadUniverse, { timeLimitMs: quoteBudgetMs });
+    const t2 = Date.now();
+    console.log(`[top-signals]   quotes=${quotes.length} in ${t2 - t1}ms`);
+
+    // Need at least a few quotes for a meaningful scan. Keep the bar very low
+    // for Netlify cold starts using the curated 82-stock fallback.
+    const minimumCoverage = config.isNetlifyRuntime
+      ? Math.max(3, Math.round(broadUniverse.length * 0.003)) // 0.3% or at least 3
+      : Math.min(250, Math.max(25, Math.round(broadUniverse.length * 0.02)));
 
     if (quotes.length < minimumCoverage) {
-      throw new Error("Broad market quote sweep is unavailable. Reconnect Upstox to restore 5000+ stock scanning.");
+      throw new Error(`Insufficient quote coverage: ${quotes.length} < ${minimumCoverage}. Upstox may be disconnected.`);
     }
 
     const rankings = this.quickRankUniverse(broadUniverse, quotes, strategy);
@@ -489,28 +597,147 @@ class TopSignalsService {
     const overview = this.buildOverviewFromPreScan(rankings, broadUniverse.length);
     overview.sectorRotation = this.buildSectorRotation(rankings);
     overview.unusualActivity = this.buildUnusualActivity(rankings, 8);
+    const t3 = Date.now();
+    console.log(`[top-signals]   rankings=${rankings.length} shortlist=${shortlist.length} in ${t3 - t2}ms`);
+
+    // ── Pre-scan leaders (available even before deep analysis) ───────────────
+    // When the deep analysis produces 0 BUY/SELL results (small universe,
+    // news not verified, cold start), we fall back to these quickScore-based
+    // leaders. They're ALWAYS surfaced so the radar is never completely empty.
+    const preScanLeaders = {
+      bullish: rankings
+        .filter((r) => r.quickScore >= 54 && Number(r.tradeabilityScore ?? 0) >= 0)
+        .sort((a, b) => b.quickScore - a.quickScore || (b.tradeabilityScore ?? 0) - (a.tradeabilityScore ?? 0))
+        .slice(0, 8)
+        .map((r) => ({
+          symbol: r.stock.symbol,
+          name: r.stock.name,
+          sector: r.stock.sector,
+          price: r.quote?.price || 0,
+          changePercent: r.quote?.changePct || 0,
+          quickScore: r.quickScore,
+          tradeabilityScore: r.tradeabilityScore,
+          radarVerdict: "BUY",
+          radarScore: r.quickScore,
+          score: r.quickScore,
+          direction: "bullish",
+          reason: `Pre-scan momentum leader — price structure shows bullish bias with quickScore ${r.quickScore.toFixed(1)}. Awaiting deep analysis confirmation.`,
+          _preScan: true,
+        })),
+      bearish: rankings
+        .filter((r) => r.quickScore <= 46 && Number(r.tradeabilityScore ?? 0) >= 0)
+        .sort((a, b) => a.quickScore - b.quickScore || (b.tradeabilityScore ?? 0) - (a.tradeabilityScore ?? 0))
+        .slice(0, 8)
+        .map((r) => ({
+          symbol: r.stock.symbol,
+          name: r.stock.name,
+          sector: r.stock.sector,
+          price: r.quote?.price || 0,
+          changePercent: r.quote?.changePct || 0,
+          quickScore: r.quickScore,
+          tradeabilityScore: r.tradeabilityScore,
+          radarVerdict: "SELL",
+          radarScore: 100 - r.quickScore,
+          score: 100 - r.quickScore,
+          direction: "bearish",
+          reason: `Pre-scan momentum leader — price structure shows bearish bias with quickScore ${r.quickScore.toFixed(1)}. Awaiting deep analysis confirmation.`,
+          _preScan: true,
+        })),
+    };
+
+    // ── Deep analysis — strictVerification:false so the scan surfaces more ──
+    // The scan is a screener. News-verification strictness is reserved for the
+    // single-stock deep dive (/api/ask). Using strict=true here caused nearly
+    // all stocks to score HOLD because they lacked verified news, producing 0
+    // radar results even when the market had clear directional momentum.
     const analysis = shortlist.length ? await analyzeMarket({
       strategy,
       stocks: shortlist,
-      strictVerification: true,
+      strictVerification: false,
       includeTargetedNews: false,
       newsTargetedLimit: 0,
     }) : {
       generatedAt: new Date().toISOString(),
       results: [],
     };
-    const enrichedResults = this.attachPreScanContext(analysis.results || [], rankings);
+    const t4 = Date.now();
+    console.log(`[top-signals]   analyzeMarket in ${t4 - t3}ms total ${t4 - t0}ms`);
 
-    const data = {
+    const enrichedResults = this.attachPreScanContext(analysis.results || [], rankings);
+    return {
       strategy,
       generatedAt: analysis.generatedAt || new Date().toISOString(),
       universeCount: broadUniverse.length,
       deepAnalyzed: shortlist.length,
       overview,
       results: enrichedResults,
+      preScanLeaders,
     };
+  }
 
+  async runScan(strategy = "swing") {
+    const cacheKey = `scan:${strategy}`;
+
+    // 1. In-process cache (warm between requests on the same instance)
+    const memCached = this.cache.get(cacheKey);
+    if (memCached && Date.now() - memCached.timestamp < this.cacheTimeout) {
+      return memCached.data;
+    }
+
+    // 2. Blob cache — fresh (within TTL)
+    const blobCached = await this._blobGet(cacheKey);
+    if (blobCached) {
+      this.cache.set(cacheKey, { data: blobCached, timestamp: Date.now() });
+      return blobCached;
+    }
+
+    // 3. On Netlify, serve stale Blob data (up to 1h past expiry).
+    //    Only serve if the stale data has the current format (preScanLeaders).
+    //    Old-format blobs (without preScanLeaders) are treated as absent so
+    //    a fresh scan runs and produces proper results.
+    if (config.isNetlifyRuntime) {
+      const stale = await this._blobGetStale(cacheKey, 60 * 60_000);
+      if (stale?.preScanLeaders) {
+        console.log(`[top-signals] serving stale ${cacheKey}; refreshing in background`);
+        this._scheduleBackgroundRefresh(strategy);
+        return { ...stale, _stale: true };
+      }
+      if (stale && !stale.preScanLeaders) {
+        console.log(`[top-signals] stale ${cacheKey} has old format, forcing fresh scan`);
+      }
+    }
+
+    // 4. No valid Blob at all. Race a real scan against a 20s budget.
+    //    With Blob-cached quotes (market-service), warm scans finish in ~8s.
+    //    The Netlify handler caps the HTTP response at 22s, so 20s gives us
+    //    enough room to complete, serialize, and return before the 26s hard limit.
+    if (config.isNetlifyRuntime) {
+      try {
+        const data = await Promise.race([
+          this._performScan(strategy),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("scan_budget_exceeded")), 20_000)),
+        ]);
+        this.cache.set(cacheKey, { data, timestamp: Date.now() });
+        this._blobSet(cacheKey, data, 5 * 60_000).catch(() => {});
+        return data;
+      } catch (err) {
+        console.warn(`[top-signals] scan timeout / failure for ${strategy}:`, err?.message || err);
+        // Use a 30s effective TTL for the warming placeholder so the next
+        // request re-tries the scan rather than serving stale warming data
+        // for the full 3-minute in-process cache window.
+        const placeholder = this._buildWarmingPlaceholder(strategy);
+        this.cache.set(cacheKey, {
+          data: placeholder,
+          timestamp: Date.now() - Math.max(0, this.cacheTimeout - 30_000),
+        });
+        return placeholder;
+      }
+    }
+
+    // 5. Local dev / long-running server: synchronous scan, no time budget.
+    const data = await this._performScan(strategy);
     this.cache.set(cacheKey, { data, timestamp: Date.now() });
+    this._blobSet(cacheKey, data).catch(() => {});
     return data;
   }
 
@@ -560,6 +787,9 @@ class TopSignalsService {
         ...scan.overview,
         deepAnalyzed: scan.deepAnalyzed,
         scanStrategy: scan.strategy,
+        // Propagate so frontend can show warming/stale notice.
+        _warming: Boolean(scan._warming),
+        _stale: Boolean(scan._stale),
       };
     } catch (error) {
       return {
@@ -571,6 +801,7 @@ class TopSignalsService {
         averageScore: 0,
         marketSentiment: "unavailable",
         lastUpdated: new Date().toISOString(),
+        _warming: true,
         error: error.message,
       };
     }
@@ -618,14 +849,22 @@ class TopSignalsService {
         .slice(0, limit)
         .map((item) => this.buildSignalRow(item.row, "bullish"));
 
+      // Fall back to pre-scan momentum leaders when deep analysis yields nothing.
+      // This ensures the radar always shows something useful even on cold start.
+      const preScanBullish = scan.preScanLeaders?.bullish || [];
+      const stocks = rows.length > 0 ? rows : preScanBullish.slice(0, limit);
+
       return {
-        stocks: rows,
+        stocks,
         timeframe,
         totalAnalyzed: scan.universeCount,
         deepAnalyzed: scan.deepAnalyzed,
-        bullishFound: rows.length,
-        averageScore: rows.length ? Math.round(rows.reduce((sum, stock) => sum + stock.score, 0) / rows.length) : 0,
+        bullishFound: stocks.length,
+        averageScore: stocks.length ? Math.round(stocks.reduce((sum, stock) => sum + (stock.score || stock.radarScore || 0), 0) / stocks.length) : 0,
         lastUpdated: scan.generatedAt || new Date().toISOString(),
+        _warming: Boolean(scan._warming),
+        _stale: Boolean(scan._stale),
+        _preScanFallback: rows.length === 0 && stocks.length > 0,
       };
     } catch (error) {
       return {
@@ -635,6 +874,7 @@ class TopSignalsService {
         bullishFound: 0,
         averageScore: 0,
         lastUpdated: new Date().toISOString(),
+        _warming: true,
         error: error.message,
       };
     }
@@ -659,14 +899,23 @@ class TopSignalsService {
         .slice(0, limit)
         .map((item) => this.buildSignalRow(item.row, "bearish"));
 
+      const preScanBearish = scan.preScanLeaders?.bearish || [];
+      const stocks = rows.length > 0 ? rows : preScanBearish.slice(0, limit);
+
       return {
-        stocks: rows,
+        stocks,
         timeframe,
         totalAnalyzed: scan.universeCount,
         deepAnalyzed: scan.deepAnalyzed,
-        bearishFound: rows.length,
-        averageScore: rows.length ? Math.round(rows.reduce((sum, stock) => sum + stock.score, 0) / rows.length) : 0,
+        // deepFound = how many stocks passed deep analysis filter (before pre-scan fallback)
+        deepFound: rows.length,
+        // bearishFound = final count after pre-scan fallback applied
+        bearishFound: stocks.length,
+        averageScore: stocks.length ? Math.round(stocks.reduce((sum, stock) => sum + (stock.score || stock.radarScore || 0), 0) / stocks.length) : 0,
         lastUpdated: scan.generatedAt || new Date().toISOString(),
+        _warming: Boolean(scan._warming),
+        _stale: Boolean(scan._stale),
+        _preScanFallback: rows.length === 0 && stocks.length > 0,
       };
     } catch (error) {
       return {
@@ -676,6 +925,7 @@ class TopSignalsService {
         bearishFound: 0,
         averageScore: 0,
         lastUpdated: new Date().toISOString(),
+        _warming: true,
         error: error.message,
       };
     }

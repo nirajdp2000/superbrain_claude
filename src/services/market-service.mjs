@@ -1298,6 +1298,112 @@ export async function getQuotes(stocks) {
   return results;
 }
 
+/**
+ * Quote fetcher optimised for the Signal Radar scan.
+ *
+ * The broad-universe cold-start fallback returns ~82 curated stocks, none of
+ * which have an `instrumentKey` — so `fetchUpstoxQuotes` always returns an
+ * empty array for them even when Upstox is connected.
+ *
+ * This function handles that case by fetching Yahoo quotes in PARALLEL for
+ * stocks that Upstox couldn't cover, bounded by `concurrency` concurrent
+ * requests and a `timeLimitMs` deadline so the scan never overruns its budget.
+ *
+ * For the full ~5000-stock universe (from the Blob cache) stocks DO have
+ * `instrumentKey` values, so Upstox batch-fetch handles them and the Yahoo
+ * fallback path is skipped (same behaviour as `getQuotes`).
+ */
+// ── Blob-backed quote cache for the scan universe ──────────────────────────
+// Persists across Netlify cold-starts so the 8-10s Yahoo batch only runs once
+// per 8-minute window. All subsequent scans within that window cost ~0s for
+// quotes, leaving the full budget for deep analysis.
+const SCAN_QUOTE_BLOB_KEY = "quote_cache:scan_universe";
+const SCAN_QUOTE_BLOB_TTL_MS = 8 * 60_000; // 8 minutes
+
+async function _getScanQuoteCache() {
+  if (!config.isNetlifyRuntime) return null;
+  try {
+    const { getStore } = await import("@netlify/blobs");
+    const store = getStore({ name: "superbrain-signals", consistency: "strong" });
+    const raw = await store.get(SCAN_QUOTE_BLOB_KEY, { type: "json" });
+    if (!raw?._expiresAt || Date.now() > raw._expiresAt) return null;
+    return Array.isArray(raw.quotes) ? raw.quotes : null;
+  } catch {
+    return null;
+  }
+}
+
+async function _saveScanQuoteCache(quotes) {
+  if (!config.isNetlifyRuntime) return;
+  try {
+    const { getStore } = await import("@netlify/blobs");
+    const store = getStore({ name: "superbrain-signals", consistency: "strong" });
+    await store.set(SCAN_QUOTE_BLOB_KEY, JSON.stringify({ quotes, _expiresAt: Date.now() + SCAN_QUOTE_BLOB_TTL_MS }));
+    console.log(`[quotes] blob cache saved: ${quotes.length} quotes`);
+  } catch (err) {
+    console.warn("[quotes] blob cache save failed:", err?.message);
+  }
+}
+
+export async function getQuotesForScan(stocks, { timeLimitMs = 10_000 } = {}) {
+  if (!Array.isArray(stocks) || stocks.length === 0) return [];
+
+  // ── 0. Blob quote cache — eliminates the 8-10s Yahoo fetch on warm calls ──
+  const blobQuotes = await _getScanQuoteCache();
+  if (blobQuotes?.length >= 15) {
+    console.log(`[quotes] blob cache hit: ${blobQuotes.length} cached quotes, skipping Yahoo fetch`);
+    return blobQuotes;
+  }
+
+  const deadline = Date.now() + timeLimitMs;
+
+  // ── 1. Try Upstox for stocks that carry an instrumentKey ─────────────────
+  const liveStatus = await getUpstoxStatus();
+  const withKey = stocks.filter((s) => s?.instrumentKey);
+
+  let liveMap = new Map();
+  if (liveStatus.connected && withKey.length > 0) {
+    const liveQuotes = await fetchUpstoxQuotes(withKey).catch(() => []);
+    for (const q of liveQuotes) liveMap.set(q.symbol, q);
+  }
+
+  // Stocks already covered by Upstox
+  const results = [];
+  const needYahoo = [];
+  for (const stock of stocks) {
+    if (liveMap.has(stock.symbol)) {
+      results.push(liveMap.get(stock.symbol));
+    } else {
+      needYahoo.push(stock);
+    }
+  }
+
+  // If we have all stocks covered, or no time left, return now.
+  if (needYahoo.length === 0 || Date.now() >= deadline) return results;
+
+  // ── 2. Parallel Yahoo for uncovered stocks (curated local fallback) ───────
+  const YAHOO_CONCURRENCY = 10;
+  const YAHOO_CAP = 82; // Fetch the full 82-stock curated universe when on Netlify
+  const toFetch = needYahoo.slice(0, YAHOO_CAP);
+
+  for (let i = 0; i < toFetch.length && Date.now() < deadline; i += YAHOO_CONCURRENCY) {
+    const chunk = toFetch.slice(i, i + YAHOO_CONCURRENCY);
+    const chunkQuotes = await Promise.allSettled(chunk.map((s) => fetchYahooQuote(s)));
+    for (const settled of chunkQuotes) {
+      if (settled.status === "fulfilled" && settled.value) {
+        results.push(settled.value);
+      }
+    }
+  }
+
+  // ── 3. Persist to Blob so the next scan skips this fetch ──────────────────
+  if (results.length >= 15) {
+    _saveScanQuoteCache(results).catch(() => {});
+  }
+
+  return results;
+}
+
 export async function getDailyCandles(symbol) {
   const chart = await fetchYahooChart(symbol, "6mo", "1d");
   return chart.candles || [];

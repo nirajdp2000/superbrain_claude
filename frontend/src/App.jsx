@@ -1888,13 +1888,13 @@ function GodLevelReportPanel({ focus }) {
 // ═══════════════════════════════════════════════════════
 function OptionsIntelPanel({ focus }) {
   const opts = focus?.optionsIntelligence;
-  if (!focus) return <Empty text="Search for a stock to view options intelligence." />;
+  if (!focus) return <Empty text="Search for any NSE stock to view Options Intelligence — PCR, max pain, OI walls, India VIX, and options strategy suggestions." />;
   if (!opts) return (
     <div className="lt-wrap">
       <Kicker>Options Intelligence</Kicker>
       <div className="quality-note">
-        <strong>Options data not yet available</strong>
-        <p>Options chain data (PCR, max pain, OI walls) loads for F&O stocks. Search for NIFTY, BANKNIFTY, or any NSE F&O stock to activate this panel.</p>
+        <strong>Options data loading…</strong>
+        <p>Search for NIFTY, BANKNIFTY, or any NSE F&O stock (RELIANCE, TCS, HDFCBANK…) to activate this panel. Options chain data requires a live NSE connection.</p>
       </div>
     </div>
   );
@@ -1916,7 +1916,13 @@ function OptionsIntelPanel({ focus }) {
           <span>{fmtTag(opts.pcrSignal || "Unknown")}</span>
         </div>
       </div>
-      <p className="muted">{opts.summary || "Options chain analysis active."}</p>
+      {opts.optionsChainAvailable === false && (
+        <div className="quality-note" style={{ borderColor: "var(--amber)", marginBottom: "0.75rem" }}>
+          <strong>⚠ Options chain unavailable from cloud</strong>
+          <p>NSE options chain API is geo-restricted from Netlify cloud servers. India VIX is shown below via Yahoo Finance. For full chain data (PCR, max pain, OI walls) connect via Upstox or run locally.</p>
+        </div>
+      )}
+      {opts.optionsChainAvailable !== false && <p className="muted">{opts.summary || "Options chain analysis active."}</p>}
       {opts.vix != null && (
         <div className="quality-note" style={{borderColor: opts.vixSignal?.includes("FEAR") ? "var(--red)" : "var(--green)"}}>
           <strong>India VIX: {Number(opts.vix).toFixed(1)}</strong>
@@ -2038,22 +2044,26 @@ function AdvTechnicalPanel({ focus }) {
       {/* Wyckoff */}
       <div className="detail-card" style={{marginBottom: "0.75rem"}}>
         <Kicker>Wyckoff Phase (Ch.12)</Kicker>
-        <div className={`lt-stance lt-${wyckoffColor}`} style={{fontSize:"14px", marginBottom:"0.5rem"}}>{fmtTag(adv.wyckoff?.phase || "Unknown")}</div>
+        <div className={`lt-stance lt-${wyckoffColor}`} style={{fontSize:"14px", marginBottom:"0.5rem"}}>
+          {["UNCLEAR","UNKNOWN","UNDEFINED"].includes(adv.wyckoff?.phase) ? "Phase Unclear" : fmtTag(adv.wyckoff?.phase || "Unknown")}
+        </div>
         <div className="coverage-list">
-          <span>Event {fmtTag(adv.wyckoff?.event || "--")}</span>
+          <span>Event {adv.wyckoff?.event ? fmtTag(adv.wyckoff.event) : "—"}</span>
           <span>Volume {fmtTag(adv.wyckoff?.volumeTrend || "--")}</span>
           <span>20d price {adv.wyckoff?.priceTrend20d != null ? `${Number(adv.wyckoff.priceTrend20d) > 0 ? "+" : ""}${Number(adv.wyckoff.priceTrend20d).toFixed(1)}%` : "--"}</span>
-          <span>Confidence {adv.wyckoff?.confidence || "--"}%</span>
+          <span>Confidence {adv.wyckoff?.confidence ?? "--"}%</span>
         </div>
-        <p className="muted">{adv.wyckoff?.interpretation || "--"}</p>
+        <p className="muted">{adv.wyckoff?.interpretation || "Wyckoff phase unclear — needs more candle history."}</p>
       </div>
 
       {/* Elliott Wave */}
       <div className="detail-card" style={{marginBottom: "0.75rem"}}>
         <Kicker>Elliott Wave (Ch.12)</Kicker>
-        <div className={`lt-stance lt-${ewColor}`} style={{fontSize:"13px", marginBottom:"0.5rem"}}>{fmtTag(adv.elliottWave?.wavePosition || "Unclear")}</div>
+        <div className={`lt-stance lt-${ewColor}`} style={{fontSize:"13px", marginBottom:"0.5rem"}}>
+          {["UNCLEAR","UNKNOWN","INSUFFICIENT_PIVOTS"].includes(adv.elliottWave?.wavePosition) ? "Structure Unclear" : fmtTag(adv.elliottWave?.wavePosition || "Unclear")}
+        </div>
         <div className="coverage-list">
-          <span>Confidence {adv.elliottWave?.confidence || 0}%</span>
+          <span>Confidence {adv.elliottWave?.confidence ?? 0}%</span>
           <span>W3/W1 ratio {adv.elliottWave?.fibRatios?.wave3to1 != null ? Number(adv.elliottWave.fibRatios.wave3to1).toFixed(2) : "--"}</span>
           {adv.elliottWave?.projection?.wave5Target && <span>W5 target ~{Number(adv.elliottWave.projection.wave5Target).toFixed(1)}</span>}
         </div>
@@ -2399,6 +2409,23 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
 
   const onSubmitRef = useRef(null);
+  const errorTimerRef = useRef(null);
+
+  // Auto-dismiss errors after 8 seconds so they don't persist across tabs.
+  function showError(msg) {
+    setError(msg);
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    if (msg) {
+      errorTimerRef.current = setTimeout(() => setError(""), 8_000);
+    }
+  }
+
+  // Clear error whenever the user switches tabs — it's always stale by then.
+  function switchTab(tab) {
+    setActiveTab(tab);
+    setError("");
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+  }
 
   const focus = analysisResult?.found ? analysisResult.analysis : dashboard?.focus || null;
   const answer = analysisResult?.found ? analysisResult.answer : "";
@@ -2411,23 +2438,54 @@ export default function App() {
   const dataSnapshotId = analysisResult?.snapshotId ?? null;
   const dataAsOf = analysisResult?.asOf ?? dashboard?.asOf ?? dashboard?.generatedAt ?? null;
 
-  async function loadDashboard(preserve = false) {
-    setDashLoading(true);
-    setError("");
+  async function loadDashboard(preserve = false, { silentRetry = false } = {}) {
+    if (!silentRetry) {
+      setDashLoading(true);
+      setError("");
+    }
     try {
-      const params = new URLSearchParams({ symbols: symbolsInput, strategy });
+      // Cap to 6 symbols client-side to match the server limit.
+      const cappedSymbols = symbolsInput
+        .split(",").map((s) => s.trim()).filter(Boolean).slice(0, 6).join(",");
+      const params = new URLSearchParams({ symbols: cappedSymbols, strategy });
       if (horizon) {
         params.set("horizonDays", horizon);
       }
       const nextDashboard = await apiFetch(`/api/dashboard?${params.toString()}`);
+
+      // Server returns _partial:true + skeleton rows when the build exceeds
+      // the Netlify function timeout. Show the skeleton immediately, then
+      // silently retry once — by then the Blob cache should be warm.
+      if (nextDashboard?._partial) {
+        setDashboard(nextDashboard);
+        if (!preserve) {
+          setAnalysisResult(null);
+        }
+        setError("");
+        setTimeout(() => {
+          loadDashboard(true, { silentRetry: true });
+        }, 5000);
+        return;
+      }
+
+      if (nextDashboard?.timedOut) {
+        showError("Dashboard timed out — showing partial results. Try fewer symbols.");
+      }
       setDashboard(nextDashboard);
       if (!preserve) {
         setAnalysisResult(null);
       }
     } catch (nextError) {
-      setError(nextError.message || "Dashboard load failed.");
+      const msg = nextError.message || "Dashboard load failed.";
+      if (!silentRetry) {
+        showError(msg.includes("504") || msg.includes("timed out")
+          ? "Analysis timed out. Reduce the symbol list to 4–5 stocks and try again."
+          : msg);
+      }
     } finally {
-      setDashLoading(false);
+      if (!silentRetry) {
+        setDashLoading(false);
+      }
     }
   }
 
@@ -2450,6 +2508,10 @@ export default function App() {
       return;
     }
 
+    // Clear previous result immediately so the UI never shows the OLD stock
+    // while waiting for the new one. If the user clicked "APOLLO" after
+    // viewing "ICICIBANK", we reset so the loading state is unambiguous.
+    setAnalysisResult(null);
     setAskLoading(true);
     setError("");
 
@@ -2488,14 +2550,22 @@ export default function App() {
         }
       }
 
-      setAnalysisResult(payload);
-      setActiveTab("Verdict");
-
-      if (payload.found) {
-        rememberAsk(trimmed, payload.symbol || symbol, payload.companyName || companyName);
+      // Backend timed out — show a friendly retry prompt instead of stale stock.
+      if (payload.timedOut) {
+        showError(`Analysis for ${symbol || payload.query || "this stock"} timed out — server is warming up. Try again in a moment.`);
+        setAnalysisResult(null);
+      } else {
+        setAnalysisResult(payload);
+        switchTab("Verdict");
+        if (payload.found) {
+          rememberAsk(trimmed, payload.symbol || symbol, payload.companyName || companyName);
+        }
       }
     } catch (nextError) {
-      setError(nextError.message || "Ask failed.");
+      const msg = nextError.message || "Ask failed.";
+      showError(msg.includes("502") || msg.includes("504") || msg.includes("timeout")
+        ? `Analysis for ${symbol || "this stock"} timed out — server is warming up. Try again in a moment.`
+        : msg);
     } finally {
       setAskLoading(false);
     }
@@ -2540,7 +2610,7 @@ export default function App() {
         dashboard={dashboard}
         onFocus={focusSymbol}
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={switchTab}
       />
 
       <div className="main">
@@ -2621,7 +2691,39 @@ export default function App() {
             </div>
           </section>
 
-          {error ? <div className="error-bar">{error}</div> : null}
+          <section className="hero-grid">
+            <div className="hero-card hero-card-summary">
+              <div className="hero-card-head">
+                <div>
+                  <Kicker>Decision Overview</Kicker>
+                  <h2>{focus?.symbol || "Market overview"}</h2>
+                </div>
+                {focus?.verdict ? <Pill color={verdictColor(focus.verdict)}>{fmtVerdict(focus.verdict)}</Pill> : <Badge>Research live</Badge>}
+              </div>
+              <p className="hero-muted">
+                {answer || focus?.recommendation?.summary || "Use the tabs below to move from headline verdict to evidence, long-term context, market regime, and signal scans."}
+              </p>
+              <div className="hero-stats">
+                <StatBox label="Average confidence" value={fmt(dashboard?.summary?.avgConfidence, "%", 0)} sub="across coverage" />
+                <StatBox label="Buy setups" value={dashboard?.summary?.buySignals || 0} sub="current dashboard" color="green" />
+                <StatBox label="Sell setups" value={dashboard?.summary?.sellSignals || 0} sub="current dashboard" color="red" />
+              </div>
+            </div>
+            <MarketGraphic dashboard={dashboard} focus={focus} />
+            <ResearchQualityCard focus={focus} dashboard={dashboard} />
+          </section>
+
+          {error ? (
+            <div className="error-bar" role="alert">
+              <span>{error}</span>
+              <button
+                type="button"
+                className="error-bar-dismiss"
+                onClick={() => { setError(""); if (errorTimerRef.current) clearTimeout(errorTimerRef.current); }}
+                aria-label="Dismiss"
+              >✕</button>
+            </div>
+          ) : null}
           <ResolutionPanel result={unresolved} onFocus={focusSymbol} />
 
           {showSettings ? (
