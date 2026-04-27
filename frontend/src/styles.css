@@ -1140,6 +1140,24 @@ select:focus {
   border-radius: 18px;
   background: var(--surface-muted);
   border: 1px solid rgba(15, 27, 45, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.bench-card > span:first-child {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.bench-card > strong {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
 }
 
 .stat-value {
