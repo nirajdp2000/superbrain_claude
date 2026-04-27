@@ -765,9 +765,6 @@ function SearchVisualPanel({ dashboard, focus }) {
 }
 
 function MarketGraphic({ dashboard, focus }) {
-  const width = 460;
-  const height = 220;
-  const padding = 26;
   const benchmarks = (dashboard?.marketContext?.benchmarks || []).slice(0, 5);
   const fallback = [
     { label: "Nifty 50", changePct: 0.8 },
@@ -777,61 +774,41 @@ function MarketGraphic({ dashboard, focus }) {
     { label: "Gold", changePct: -0.4 },
   ];
   const rawSeries = benchmarks.length ? benchmarks : fallback;
-  const series = rawSeries.map((item, index) => ({
-    label: item.label,
-    value: Number(item.changePct || 0),
-    x: padding + (index * (width - padding * 2)) / Math.max(1, (rawSeries.length - 1)),
-  }));
-  const maxAbs = Math.max(1, ...series.map((item) => Math.abs(item.value)));
-  const points = series.map((item) => {
-    const y = height / 2 - (item.value / maxAbs) * (height / 2 - padding);
-    return { ...item, y };
-  });
-  const linePoints = points.map((item) => `${item.x},${item.y}`).join(" ");
-  const areaPoints = `${padding},${height - padding} ${linePoints} ${width - padding},${height - padding}`;
+  const maxAbs = Math.max(0.01, ...rawSeries.map((item) => Math.abs(Number(item.changePct || 0))));
+  const regime = dashboard?.marketContext?.regime || "Loading";
+  const riskOn = dashboard?.marketContext?.riskOnScore;
+  const regimeColor = riskOn >= 0 ? "green" : "red";
 
   return (
     <div className="hero-card hero-card-chart">
       <div className="hero-card-head">
         <div>
-          <Kicker>Market Graphic</Kicker>
-          <h3>Benchmarks and pressure map</h3>
+          <Kicker>Market Pulse</Kicker>
+          <h3 style={{marginTop:"2px"}}>Benchmarks &amp; Regime</h3>
         </div>
-        <Badge color={dashboard?.marketContext?.riskOnScore >= 0 ? "green" : "red"}>
-          {dashboard?.marketContext?.regime || "Loading"}
-        </Badge>
+        <div className={`mg-regime-badge mg-regime-${regimeColor}`}>{regime}</div>
       </div>
-      <div className="market-graphic-wrap">
-        <svg className="market-graphic" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Market benchmark graphic">
-          <defs>
-            <linearGradient id="marketArea" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor="rgba(27, 174, 115, 0.36)" />
-              <stop offset="100%" stopColor="rgba(81, 102, 191, 0.04)" />
-            </linearGradient>
-          </defs>
-          <line x1={padding} y1={height / 2} x2={width - padding} y2={height / 2} className="market-axis" />
-          <polygon points={areaPoints} className="market-area" />
-          <polyline points={linePoints} className="market-line" />
-          {points.map((item) => (
-            <g key={item.label}>
-              <circle cx={item.x} cy={item.y} r="5.5" className="market-point" />
-              <text x={item.x} y={height - 10} textAnchor="middle" className="market-label">
-                {item.label}
-              </text>
-            </g>
-          ))}
-        </svg>
+      <div className="mg-bench-list">
+        {rawSeries.map((item) => {
+          const val = Number(item.changePct || 0);
+          const pct = Math.abs(val) / maxAbs * 100;
+          const pos = val >= 0;
+          return (
+            <div key={item.label} className="mg-bench-row">
+              <span className="mg-bench-label">{item.label}</span>
+              <div className="mg-bench-bar-wrap">
+                <div className={`mg-bench-bar ${pos ? "mg-bench-bar-pos" : "mg-bench-bar-neg"}`} style={{width:`${Math.max(4, pct)}%`}} />
+              </div>
+              <span className={`mg-bench-val ${pos ? "mg-bench-pos" : "mg-bench-neg"}`}>{pos ? "+" : ""}{val.toFixed(2)}%</span>
+            </div>
+          );
+        })}
       </div>
-      <div className="market-graphic-foot">
-        <div className="market-highlight">
-          <span className="market-highlight-label">Focus</span>
-          <strong>{focus?.symbol || dashboard?.focus?.symbol || "RELIANCE"}</strong>
-          <span>{focus?.recommendation?.summary || dashboard?.focus?.recommendation?.summary || "Search any stock for a fresh recommendation."}</span>
-        </div>
-        <div className="market-highlight">
-          <span className="market-highlight-label">Coverage</span>
-          <strong>{dashboard?.summary?.totalCovered || 0}</strong>
-          <span>{dashboard?.summary?.buySignals || 0} buy setups, {dashboard?.summary?.sellSignals || 0} sell setups</span>
+      <div className="mg-footer">
+        <div className="mg-focus-row">
+          <span className="mg-focus-sym">{focus?.symbol || dashboard?.focus?.symbol || "—"}</span>
+          {focus?.verdict && <div className={`do-verdict-pill do-verdict-${verdictColor(focus.verdict)}`} style={{fontSize:"10px",padding:"2px 8px"}}>{fmtVerdict(focus.verdict)}</div>}
+          <span className="mg-cov">{dashboard?.summary?.totalCovered || 0} covered</span>
         </div>
       </div>
     </div>
@@ -842,39 +819,44 @@ function ResearchQualityCard({ focus, dashboard }) {
   const verification = focus?.verification || {};
   const newsSummary = focus?.newsSummary || {};
   const fundamentalsInfo = getFundamentalsAvailability(focus);
-  const items = [
-    ["Market feed", fmtSource(verification.marketSource || focus?.quote?.source), focus?.quote?.asOf ? timeAgo(focus.quote.asOf) : "--"],
-    ["Fundamentals", fundamentalsInfo.label, fundamentalsInfo.detail],
-    ["Headline coverage", verification.headlineCount ?? newsSummary.newsCount ?? 0, `${verification.verifiedHeadlineCount ?? newsSummary.verifiedCount ?? 0} verified`],
-    ["Official support", verification.officialHeadlineCount ?? newsSummary.officialCount ?? 0, `${newsSummary.sourceCoverage?.length || 0} sources`],
-  ];
+  const verified = (verification.verifiedHeadlineCount ?? newsSummary.verifiedCount ?? 0);
+  const headlines = (verification.headlineCount ?? newsSummary.newsCount ?? 0);
+  const official = (verification.officialHeadlineCount ?? newsSummary.officialCount ?? 0);
+  const sources = newsSummary.sourceCoverage?.length || 0;
+  const trustColor = verified > 0 || official > 0 ? "green" : "amber";
 
   return (
-    <div className="hero-card hero-card-quality">
-      <div className="hero-card-head">
-        <div>
-          <Kicker>Research Quality</Kicker>
-          <h3>How to trust this output</h3>
+    <div className="rq-strip">
+      <div className="rq-label">
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none" style={{flexShrink:0}}>
+          <circle cx="6.5" cy="6.5" r="5.5" stroke="currentColor" strokeWidth="1.5"/>
+          <path d="M6.5 4v3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          <circle cx="6.5" cy="9.5" r="0.6" fill="currentColor"/>
+        </svg>
+        Research Quality
+      </div>
+      <div className="rq-items">
+        <div className="rq-item">
+          <span className="rq-val">{fmtSource(verification.marketSource || focus?.quote?.source)}</span>
+          <span className="rq-sub">feed {focus?.quote?.asOf ? timeAgo(focus.quote.asOf) : "--"}</span>
         </div>
-        <Badge color={(verification.verifiedHeadlineCount || 0) > 0 || (verification.officialHeadlineCount || 0) > 0 ? "green" : "amber"}>
-          Source discipline
-        </Badge>
+        <div className="rq-divider" />
+        <div className="rq-item">
+          <span className="rq-val">{fundamentalsInfo.label}</span>
+          <span className="rq-sub">{fundamentalsInfo.detail}</span>
+        </div>
+        <div className="rq-divider" />
+        <div className="rq-item">
+          <span className="rq-val">{headlines}</span>
+          <span className="rq-sub">{verified} verified</span>
+        </div>
+        <div className="rq-divider" />
+        <div className="rq-item">
+          <span className="rq-val">{official}</span>
+          <span className="rq-sub">{sources} sources</span>
+        </div>
       </div>
-      <p className="hero-muted">
-        Superbrain should work as an evidence layer, not as a blind trade trigger. Review source quality, freshness, and verification before acting.
-      </p>
-      <div className="quality-grid">
-        {items.map(([label, value, sub]) => (
-          <div key={label} className="quality-item">
-            <span>{label}</span>
-            <strong>{value}</strong>
-            <small>{sub}</small>
-          </div>
-        ))}
-      </div>
-      <div className="quality-note">
-        <strong>{credibilityInsight(focus)}</strong>
-      </div>
+      <Badge color={trustColor} style={{flexShrink:0}}>{trustColor === "green" ? "✓ Verified" : "Unverified"}</Badge>
     </div>
   );
 }
@@ -2085,7 +2067,7 @@ function AdvancedIntelPanel({ focus, dashboard }) {
                 </div>
               </div>
               <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-                <Kicker>ADX — Trend Strength (Ch.5.3)</Kicker>
+                <Kicker>ADX — Trend Strength</Kicker>
                 <div className="verdict-stats">
                   <StatBox label="ADX" value={adv.adx?.adx != null ? Number(adv.adx.adx).toFixed(1) : "--"} sub={fmtTag(adv.adx?.trendStrength || "")} color={adxColor} />
                   <StatBox label="DI+" value={adv.adx?.diPlus != null ? Number(adv.adx.diPlus).toFixed(1) : "--"} sub="bullish force" color="green" />
@@ -2099,7 +2081,7 @@ function AdvancedIntelPanel({ focus, dashboard }) {
                 </p>
               </div>
               <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-                <Kicker>Supertrend — India Favourite (Ch.5.3)</Kicker>
+                <Kicker>Supertrend — India Favourite</Kicker>
                 <div className="coverage-list">
                   <span>Direction {adv.supertrend?.direction || "--"}</span>
                   <span>Level {adv.supertrend?.value != null ? Number(adv.supertrend.value).toFixed(1) : "--"}</span>
@@ -2114,7 +2096,7 @@ function AdvancedIntelPanel({ focus, dashboard }) {
                 )}
               </div>
               <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-                <Kicker>Wyckoff Phase (Ch.12)</Kicker>
+                <Kicker>Wyckoff Phase</Kicker>
                 <div className={`lt-stance lt-${wyckoffColor}`} style={{fontSize:"14px", marginBottom:"0.5rem"}}>
                   {["UNCLEAR","UNKNOWN","UNDEFINED"].includes(adv.wyckoff?.phase) ? "Phase Unclear" : fmtTag(adv.wyckoff?.phase || "Unknown")}
                 </div>
@@ -2127,7 +2109,7 @@ function AdvancedIntelPanel({ focus, dashboard }) {
                 <p className="muted">{adv.wyckoff?.interpretation || "Wyckoff phase unclear — needs more candle history."}</p>
               </div>
               <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-                <Kicker>Elliott Wave (Ch.12)</Kicker>
+                <Kicker>Elliott Wave</Kicker>
                 <div className={`lt-stance lt-${ewColor}`} style={{fontSize:"13px", marginBottom:"0.5rem"}}>
                   {["UNCLEAR","UNKNOWN","INSUFFICIENT_PIVOTS"].includes(adv.elliottWave?.wavePosition) ? "Structure Unclear" : fmtTag(adv.elliottWave?.wavePosition || "Unclear")}
                 </div>
@@ -2140,7 +2122,7 @@ function AdvancedIntelPanel({ focus, dashboard }) {
               </div>
               {adv.chartPatterns?.patterns?.length > 0 && (
                 <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-                  <Kicker>Chart Patterns (Ch.6)</Kicker>
+                  <Kicker>Chart Patterns</Kicker>
                   {adv.chartPatterns.patterns.map((p) => (
                     <div key={p.pattern} style={{marginBottom:"0.75rem"}}>
                       <div className="news-tags">
@@ -2156,7 +2138,7 @@ function AdvancedIntelPanel({ focus, dashboard }) {
               )}
               {adv.volumeProfile?.poc && (
                 <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-                  <Kicker>Volume Profile — POC (Ch.3, Ch.14)</Kicker>
+                  <Kicker>Volume Profile — POC</Kicker>
                   <div className="coverage-list">
                     <span>Point of Control ₹{Number(adv.volumeProfile.poc).toFixed(1)}</span>
                     <span>Signal {fmtTag(adv.volumeProfile.signal || "--")}</span>
@@ -2222,7 +2204,7 @@ function AdvancedIntelPanel({ focus, dashboard }) {
                 </div>
               )}
               <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-                <Kicker>QGLP — Raamdeo Agrawal (Ch.2.9)</Kicker>
+                <Kicker>QGLP — Raamdeo Agrawal</Kicker>
                 <div className="verdict-stats">
                   <StatBox label="Quality" value={fi.qglp?.scores?.quality || "--"} sub="ROE+ROCE+D/E" color={fi.qglp?.scores?.quality >= 60 ? "green" : "amber"} />
                   <StatBox label="Growth" value={fi.qglp?.scores?.growth || "--"} sub="rev+profit growth" color={fi.qglp?.scores?.growth >= 60 ? "green" : "amber"} />
@@ -2237,7 +2219,7 @@ function AdvancedIntelPanel({ focus, dashboard }) {
                 </ul>
               </div>
               <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-                <Kicker>Coffee Can — Saurabh Mukherjea (Ch.2.7)</Kicker>
+                <Kicker>Coffee Can — Saurabh Mukherjea</Kicker>
                 <div className={`lt-stance lt-${ccColor}`} style={{fontSize:"13px", marginBottom:"0.5rem"}}>
                   {fi.coffeeCan?.verdict ? fmtTag(fi.coffeeCan.verdict) : "--"} ({fi.coffeeCan?.metCount || 0}/5 criteria)
                 </div>
@@ -2247,7 +2229,7 @@ function AdvancedIntelPanel({ focus, dashboard }) {
                 <p className="muted" style={{marginTop:"0.5rem"}}>{fi.coffeeCan?.interpretation}</p>
               </div>
               <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-                <Kicker>Economic Moat — Warren Buffett (Ch.2.5)</Kicker>
+                <Kicker>Economic Moat — Warren Buffett</Kicker>
                 <div className="verdict-stats">
                   <StatBox label="Moat Width" value={fi.moat?.moatWidth || "--"} sub={fmtTag(fi.moat?.moatType || "none")} color={moatColor} />
                   <StatBox label="Moat Score" value={fi.moat?.moatScore || "--"} sub="/ 100" color={moatColor} />
@@ -2258,7 +2240,7 @@ function AdvancedIntelPanel({ focus, dashboard }) {
                 <p className="muted">{fi.moat?.interpretation}</p>
               </div>
               <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-                <Kicker>Peter Lynch Category (Ch.2.4)</Kicker>
+                <Kicker>Peter Lynch Category</Kicker>
                 <div className="news-tags">
                   <Badge color="amber">{fmtTag(fi.lynch?.category || "--")}</Badge>
                   {fi.lynch?.avgGrowth != null && <Badge>{Number(fi.lynch.avgGrowth).toFixed(1)}% avg growth</Badge>}
@@ -2268,7 +2250,7 @@ function AdvancedIntelPanel({ focus, dashboard }) {
               </div>
               {fi.redFlags && (
                 <div className="detail-card" style={{borderLeft: fi.redFlags.riskLevel === "HIGH" ? "3px solid var(--red)" : fi.redFlags.riskLevel === "MEDIUM" ? "3px solid var(--amber)" : "3px solid var(--green)"}}>
-                  <Kicker>Accounting Red Flags (Ch.2.10)</Kicker>
+                  <Kicker>Accounting Red Flags</Kicker>
                   <div className="news-tags">
                     <Badge color={fi.redFlags.riskLevel === "HIGH" ? "red" : fi.redFlags.riskLevel === "MEDIUM" ? "amber" : "green"}>
                       {fi.redFlags.riskLevel} risk — {fi.redFlags.count} flag(s)
@@ -2293,7 +2275,7 @@ function AdvancedIntelPanel({ focus, dashboard }) {
         <div className="adv-body">
           <div className="lt-wrap">
             <Kicker>India Market Intelligence — Phase 5</Kicker>
-            <p className="muted" style={{marginBottom:"1rem"}}>India-specific signals: GIFT NIFTY pre-market, event calendar, sector rotation, F&O expiry, results season — from Ch.1, Ch.10, Ch.17.</p>
+            <p className="muted" style={{marginBottom:"1rem"}}>India-specific signals: GIFT NIFTY pre-market, event calendar, sector rotation, F&amp;O expiry, results season.</p>
             {indiaSignals.length > 0 && (
               <div className="quality-note" style={{marginBottom:"1rem"}}>
                 <strong>Active India Signals ({indiaSignals.length})</strong>
@@ -2307,7 +2289,7 @@ function AdvancedIntelPanel({ focus, dashboard }) {
             )}
             {giftNifty?.gapType && (
               <div className="detail-card" style={{marginBottom:"0.75rem", borderLeft:`3px solid ${giftNifty.gapType.includes("UP") ? "var(--green)" : giftNifty.gapType.includes("DOWN") ? "var(--red)" : "var(--amber)"}`}}>
-                <Kicker>GIFT NIFTY Pre-Market Signal (Ch.1.4)</Kicker>
+                <Kicker>GIFT NIFTY Pre-Market Signal</Kicker>
                 <div className="verdict-stats">
                   <StatBox label="Gap" value={giftNifty.gapPct != null ? `${giftNifty.gapPct > 0 ? "+" : ""}${Number(giftNifty.gapPct).toFixed(2)}%` : "--"} sub={fmtTag(giftNifty.gapType || "")} color={giftNifty.gapPct > 0 ? "green" : "red"} />
                   <StatBox label="Futures" value={giftNifty.currentFuturesPrice || "--"} sub="current" />
@@ -2318,7 +2300,7 @@ function AdvancedIntelPanel({ focus, dashboard }) {
             )}
             {resultsSeason && (
               <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-                <Kicker>Results Season Status (Ch.10)</Kicker>
+                <Kicker>Results Season Status</Kicker>
                 <div className="news-tags">
                   <Badge color={resultsSeason.isInSeason ? "amber" : "green"}>{resultsSeason.isInSeason ? "ACTIVE" : "OFF-SEASON"}</Badge>
                   <Badge color={resultsSeason.ivExpansionRisk === "HIGH" ? "red" : "green"}>IV risk: {resultsSeason.ivExpansionRisk}</Badge>
@@ -2329,7 +2311,7 @@ function AdvancedIntelPanel({ focus, dashboard }) {
             )}
             {events.length > 0 && (
               <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-                <Kicker>Upcoming Market Events (Ch.10, Ch.17)</Kicker>
+                <Kicker>Upcoming Market Events</Kicker>
                 {events.slice(0, 4).map((e, i) => (
                   <div key={i} style={{marginBottom:"0.75rem", paddingBottom:"0.75rem", borderBottom: i < events.length - 1 ? "1px solid var(--border)" : "none"}}>
                     <div className="news-tags">
@@ -2346,7 +2328,7 @@ function AdvancedIntelPanel({ focus, dashboard }) {
             )}
             {sectorRotation.length > 0 && (
               <div className="detail-card">
-                <Kicker>Sector Rotation Signals (Ch.17)</Kicker>
+                <Kicker>Sector Rotation Signals</Kicker>
                 {sectorRotation.map((s, i) => (
                   <div key={i} style={{marginBottom:"0.5rem"}}>
                     <div className="news-tags">
@@ -2796,22 +2778,36 @@ export default function App() {
                     <div className="hero-card-head">
                       <div>
                         <Kicker>Decision Overview</Kicker>
-                        <h2>{focus?.symbol || "Market overview"}</h2>
+                        <h2 style={{fontSize:"28px",fontWeight:800,letterSpacing:"-0.5px",marginTop:"2px"}}>{focus?.symbol || "Market Overview"}</h2>
                       </div>
-                      {focus?.verdict ? <Pill color={verdictColor(focus.verdict)}>{fmtVerdict(focus.verdict)}</Pill> : <Badge>Research live</Badge>}
+                      {focus?.verdict
+                        ? <div className={`do-verdict-pill do-verdict-${verdictColor(focus.verdict)}`}>{fmtVerdict(focus.verdict)}</div>
+                        : <div className="do-verdict-pill do-verdict-default">Awaiting</div>}
                     </div>
-                    <p className="hero-muted">
+                    <p style={{fontSize:"13px",color:"var(--muted)",lineHeight:1.5,marginBottom:"16px",minHeight:"44px"}}>
                       {answer || focus?.recommendation?.summary || "Search any Indian stock to see the full cross-strategy verdict and evidence stack."}
                     </p>
-                    <div className="hero-stats">
-                      <StatBox label="Average confidence" value={fmt(dashboard?.summary?.avgConfidence, "%", 0)} sub="across coverage" />
-                      <StatBox label="Buy setups" value={dashboard?.summary?.buySignals || 0} sub="current dashboard" color="green" />
-                      <StatBox label="Sell setups" value={dashboard?.summary?.sellSignals || 0} sub="current dashboard" color="red" />
+                    <div className="do-stat-row">
+                      <div className="do-stat">
+                        <span className="do-stat-val">{fmt(dashboard?.summary?.avgConfidence, "%", 0)}</span>
+                        <span className="do-stat-label">Avg Confidence</span>
+                        <div className="do-conf-bar"><div className="do-conf-fill" style={{width:`${Math.min(100, dashboard?.summary?.avgConfidence || 0)}%`}} /></div>
+                      </div>
+                      <div className="do-stat-divider" />
+                      <div className="do-stat">
+                        <span className="do-stat-val do-stat-green">{dashboard?.summary?.buySignals || 0}</span>
+                        <span className="do-stat-label">Buy Setups</span>
+                      </div>
+                      <div className="do-stat-divider" />
+                      <div className="do-stat">
+                        <span className="do-stat-val do-stat-red">{dashboard?.summary?.sellSignals || 0}</span>
+                        <span className="do-stat-label">Sell Setups</span>
+                      </div>
                     </div>
                   </div>
                   <MarketGraphic dashboard={dashboard} focus={focus} />
-                  <ResearchQualityCard focus={focus} dashboard={dashboard} />
                 </section>
+                <ResearchQualityCard focus={focus} dashboard={dashboard} />
                 <VerdictCard focus={focus} answer={answer} disclaimer={dashboard?.disclaimer} allStrategies={allStrategies} strategyConsensus={strategyConsensus} strategySelection={strategySelection} />
               </>
             ) : null}
