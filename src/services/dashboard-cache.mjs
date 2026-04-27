@@ -59,9 +59,13 @@ async function getBlobStore() {
  * Build a deterministic cache key from symbols + strategy.
  * Symbols are sorted so ["TCS","RELIANCE"] and ["RELIANCE","TCS"] share a key.
  */
+// Bump version when buildDashboard response shape changes, to force
+// invalidation of all stale Blobs cache entries on deploy.
+const CACHE_VERSION = "v2";
+
 export function dashboardCacheKey(symbols = [], strategy = "swing") {
   const sorted = [...symbols].map((s) => s.trim().toUpperCase()).sort().join(",");
-  return `dashboard:${strategy}:${sorted}`;
+  return `dashboard:${CACHE_VERSION}:${strategy}:${sorted}`;
 }
 
 /**

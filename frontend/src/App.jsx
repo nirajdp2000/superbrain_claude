@@ -2053,20 +2053,56 @@ function AdvancedIntelPanel({ focus, dashboard }) {
       {/* ══ TECHNICAL ══ */}
       {section === "technical" && (
         <div className="adv-body">
-          {!adv ? (
+          {(!adv || adv._synthetic) ? (
             <div className="lt-wrap">
-              <div className="quality-note" style={{borderColor:"var(--amber)"}}>
-                <strong>Advanced indicators unavailable</strong>
-                <p>ADX, Supertrend, Wyckoff, and Elliott Wave require ≥20 days of candle history. Showing base technical data below.</p>
+              <div className="lt-head">
+                <div>
+                  <Kicker>Technical Snapshot — Base Indicators</Kicker>
+                  <div className={`lt-stance lt-${baseTech?.score >= 60 ? "green" : baseTech?.score < 40 ? "red" : "amber"}`}>
+                    Trend: {baseTech?.trendBias || "NEUTRAL"} · Regime: {baseTech?.regime?.label || "TRANSITIONAL"}
+                  </div>
+                </div>
+                <div className={`lt-score score-${baseTech?.rsi14 > 70 ? "red" : baseTech?.rsi14 < 30 ? "green" : "amber"}`}>
+                  <span>RSI 14</span>
+                  <strong>{baseTech?.rsi14 != null ? Number(baseTech.rsi14).toFixed(1) : "--"}</strong>
+                  <span>{baseTech?.rsi14 > 70 ? "Overbought" : baseTech?.rsi14 < 30 ? "Oversold" : "Neutral"}</span>
+                </div>
               </div>
               {Object.keys(baseTech).length > 0 && (
-                <div className="verdict-stats" style={{marginTop:"1rem"}}>
-                  <StatBox label="RSI (14)" value={baseTech.rsi14 != null ? Number(baseTech.rsi14).toFixed(1) : "--"} sub={baseTech.rsi14 > 70 ? "Overbought" : baseTech.rsi14 < 30 ? "Oversold" : "Neutral"} color={baseTech.rsi14 > 70 ? "red" : baseTech.rsi14 < 30 ? "green" : "amber"} />
-                  <StatBox label="20d Return" value={baseTech.return20d != null ? `${baseTech.return20d > 0 ? "+" : ""}${Number(baseTech.return20d).toFixed(1)}%` : "--"} color={baseTech.return20d > 0 ? "green" : "red"} />
-                  <StatBox label="60d Return" value={baseTech.return60d != null ? `${baseTech.return60d > 0 ? "+" : ""}${Number(baseTech.return60d).toFixed(1)}%` : "--"} color={baseTech.return60d > 0 ? "green" : "red"} />
-                  <StatBox label="Vol Surge" value={baseTech.volumeSurge != null ? `${Number(baseTech.volumeSurge).toFixed(2)}x` : "--"} color={baseTech.volumeSurge > 1.5 ? "green" : "amber"} />
-                  <StatBox label="Tech Score" value={baseTech.score != null ? Number(baseTech.score).toFixed(0) : "--"} sub="/ 100" color={baseTech.score >= 60 ? "green" : baseTech.score >= 40 ? "amber" : "red"} />
-                </div>
+                <>
+                  <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                    <Kicker>Momentum &amp; Returns</Kicker>
+                    <div className="verdict-stats">
+                      <StatBox label="RSI (14)" value={baseTech.rsi14 != null ? Number(baseTech.rsi14).toFixed(1) : "--"} sub={baseTech.rsi14 > 70 ? "Overbought" : baseTech.rsi14 < 30 ? "Oversold" : "Neutral"} color={baseTech.rsi14 > 70 ? "red" : baseTech.rsi14 < 30 ? "green" : "amber"} />
+                      <StatBox label="20d Return" value={baseTech.return20d != null ? `${baseTech.return20d > 0 ? "+" : ""}${Number(baseTech.return20d).toFixed(1)}%` : "--"} color={baseTech.return20d > 0 ? "green" : "red"} />
+                      <StatBox label="60d Return" value={baseTech.return60d != null ? `${baseTech.return60d > 0 ? "+" : ""}${Number(baseTech.return60d).toFixed(1)}%` : "--"} color={baseTech.return60d > 0 ? "green" : "red"} />
+                      <StatBox label="Vol Surge" value={baseTech.volumeSurge != null ? `${Number(baseTech.volumeSurge).toFixed(2)}x` : "--"} color={baseTech.volumeSurge > 1.5 ? "green" : "amber"} />
+                      <StatBox label="Tech Score" value={baseTech.score != null ? Number(baseTech.score).toFixed(0) : "--"} sub="/ 100" color={baseTech.score >= 60 ? "green" : baseTech.score >= 40 ? "amber" : "red"} />
+                    </div>
+                  </div>
+                  <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                    <Kicker>Moving Averages &amp; MACD</Kicker>
+                    <div className="verdict-stats">
+                      <StatBox label="SMA 20" value={baseTech.sma20 != null ? Number(baseTech.sma20).toFixed(1) : "--"} sub="20-day average" />
+                      <StatBox label="SMA 50" value={baseTech.sma50 != null ? Number(baseTech.sma50).toFixed(1) : "--"} sub="50-day average" />
+                      <StatBox label="VWAP 20" value={baseTech.vwap20 != null ? Number(baseTech.vwap20).toFixed(1) : "--"} sub="vol-weighted" />
+                      <StatBox label="MACD" value={baseTech.macd?.histogram != null ? Number(baseTech.macd.histogram).toFixed(3) : "--"} sub={fmtTag(baseTech.macd?.posture || "")} color={baseTech.macd?.histogram > 0 ? "green" : "red"} />
+                    </div>
+                  </div>
+                  <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                    <Kicker>Support &amp; Resistance</Kicker>
+                    <div className="verdict-stats">
+                      <StatBox label="Support 20" value={baseTech.support20 != null ? Number(baseTech.support20).toFixed(1) : "--"} sub="20d low" color="green" />
+                      <StatBox label="Resistance 20" value={baseTech.resistance20 != null ? Number(baseTech.resistance20).toFixed(1) : "--"} sub="20d high" color="red" />
+                      <StatBox label="Support 60" value={baseTech.support60 != null ? Number(baseTech.support60).toFixed(1) : "--"} sub="60d low" color="green" />
+                      <StatBox label="Resistance 60" value={baseTech.resistance60 != null ? Number(baseTech.resistance60).toFixed(1) : "--"} sub="60d high" color="red" />
+                      <StatBox label="Drawdown" value={baseTech.drawdown != null ? `${Number(baseTech.drawdown).toFixed(1)}%` : "--"} sub="from high" color="amber" />
+                    </div>
+                  </div>
+                  {adv?._synthetic && (
+                    <p className="muted" style={{fontSize:"11px", marginTop:"0.5rem"}}>{adv._reason}</p>
+                  )}
+                </>
               )}
             </div>
           ) : (
@@ -2186,20 +2222,55 @@ function AdvancedIntelPanel({ focus, dashboard }) {
       {/* ══ FUNDAMENTALS ══ */}
       {section === "fundamentals" && (
         <div className="adv-body">
-          {!fi ? (
+          {(!fi || fi.available === false) ? (
             <div className="lt-wrap">
-              <div className="quality-note" style={{borderColor:"var(--amber)"}}>
-                <strong>Framework scoring unavailable</strong>
-                <p>QGLP, Coffee Can, Moat, and Lynch scoring requires detailed data from Screener/Moneycontrol. Showing available fundamental metrics below.</p>
+              <div className="lt-head">
+                <div>
+                  <Kicker>Fundamentals Snapshot — Base Metrics</Kicker>
+                  <div className={`lt-stance lt-${baseFund?.roe >= 18 ? "green" : baseFund?.roe < 10 ? "red" : "amber"}`}>
+                    Quality: {fi?.fundamentalQuality || "N/A"} · Sector: {focus?.sector || "—"}
+                  </div>
+                </div>
+                <div className={`lt-score score-${baseFund?.roe >= 18 ? "green" : baseFund?.roe < 10 ? "red" : "amber"}`}>
+                  <span>ROE</span>
+                  <strong>{baseFund?.roe != null ? `${Number(baseFund.roe).toFixed(1)}%` : "--"}</strong>
+                  <span>{baseFund?.roe >= 18 ? "Strong" : baseFund?.roe >= 12 ? "Good" : "Weak"}</span>
+                </div>
               </div>
-              {focus.fundamentals && (
-                <div className="verdict-stats" style={{marginTop:"1rem"}}>
-                  <StatBox label="ROE" value={focus.fundamentals.roe != null ? `${Number(focus.fundamentals.roe).toFixed(1)}%` : "--"} sub="Return on Equity" color={focus.fundamentals.roe >= 20 ? "green" : focus.fundamentals.roe >= 15 ? "amber" : "red"} />
-                  <StatBox label="ROCE" value={focus.fundamentals.roce != null ? `${Number(focus.fundamentals.roce).toFixed(1)}%` : "--"} sub="Return on Capital" color={focus.fundamentals.roce >= 18 ? "green" : "amber"} />
-                  <StatBox label="P/E" value={focus.fundamentals.pe != null ? Number(focus.fundamentals.pe).toFixed(1) : "--"} sub="Price / Earnings" />
-                  <StatBox label="Rev Growth" value={focus.fundamentals.salesGrowth3yr != null ? `${Number(focus.fundamentals.salesGrowth3yr).toFixed(1)}%` : "--"} sub="3yr Revenue" color={focus.fundamentals.salesGrowth3yr >= 12 ? "green" : "amber"} />
-                  <StatBox label="Profit Growth" value={focus.fundamentals.profitGrowth3yr != null ? `${Number(focus.fundamentals.profitGrowth3yr).toFixed(1)}%` : "--"} sub="3yr PAT" color={focus.fundamentals.profitGrowth3yr >= 15 ? "green" : "amber"} />
-                  <StatBox label="Fund Score" value={focus.fundamentals.score != null ? Number(focus.fundamentals.score).toFixed(0) : "--"} sub="/ 100" color={focus.fundamentals.score >= 60 ? "green" : focus.fundamentals.score >= 40 ? "amber" : "red"} />
+              <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                <Kicker>Profitability &amp; Returns</Kicker>
+                <div className="verdict-stats">
+                  <StatBox label="ROE" value={baseFund?.roe != null ? `${Number(baseFund.roe).toFixed(1)}%` : "--"} sub="Return on Equity" color={baseFund?.roe >= 18 ? "green" : baseFund?.roe >= 12 ? "amber" : "red"} />
+                  <StatBox label="ROCE" value={baseFund?.roce != null ? `${Number(baseFund.roce).toFixed(1)}%` : "--"} sub="Return on Capital" color={baseFund?.roce >= 18 ? "green" : baseFund?.roce >= 12 ? "amber" : "red"} />
+                  <StatBox label="OPM" value={baseFund?.operatingMargin != null ? `${Number(baseFund.operatingMargin).toFixed(1)}%` : "--"} sub="Operating margin" color={baseFund?.operatingMargin >= 15 ? "green" : "amber"} />
+                  <StatBox label="NPM" value={baseFund?.netMargin != null ? `${Number(baseFund.netMargin).toFixed(1)}%` : "--"} sub="Net margin" color={baseFund?.netMargin >= 10 ? "green" : "amber"} />
+                </div>
+              </div>
+              <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                <Kicker>Growth Profile</Kicker>
+                <div className="verdict-stats">
+                  <StatBox label="Rev 3y" value={baseFund?.salesGrowth3yr != null ? `${Number(baseFund.salesGrowth3yr).toFixed(1)}%` : "--"} sub="3yr CAGR" color={baseFund?.salesGrowth3yr >= 15 ? "green" : baseFund?.salesGrowth3yr >= 8 ? "amber" : "red"} />
+                  <StatBox label="Profit 3y" value={baseFund?.profitGrowth3yr != null ? `${Number(baseFund.profitGrowth3yr).toFixed(1)}%` : "--"} sub="3yr CAGR" color={baseFund?.profitGrowth3yr >= 15 ? "green" : baseFund?.profitGrowth3yr >= 8 ? "amber" : "red"} />
+                  <StatBox label="Rev 5y" value={baseFund?.salesGrowth5yr != null ? `${Number(baseFund.salesGrowth5yr).toFixed(1)}%` : "--"} sub="5yr CAGR" color={baseFund?.salesGrowth5yr >= 12 ? "green" : "amber"} />
+                  <StatBox label="EPS Growth" value={baseFund?.epsGrowth != null ? `${Number(baseFund.epsGrowth).toFixed(1)}%` : "--"} sub="latest yoy" color={baseFund?.epsGrowth >= 12 ? "green" : "amber"} />
+                </div>
+              </div>
+              <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                <Kicker>Valuation &amp; Balance Sheet</Kicker>
+                <div className="verdict-stats">
+                  <StatBox label="P/E" value={baseFund?.pe != null ? Number(baseFund.pe).toFixed(1) : "--"} sub="Price / Earnings" />
+                  <StatBox label="P/B" value={baseFund?.pb != null ? Number(baseFund.pb).toFixed(2) : "--"} sub="Price / Book" />
+                  <StatBox label="D/E" value={baseFund?.debtToEquity != null ? Number(baseFund.debtToEquity).toFixed(2) : "--"} sub="leverage" color={baseFund?.debtToEquity < 0.5 ? "green" : baseFund?.debtToEquity < 1 ? "amber" : "red"} />
+                  <StatBox label="Promoter %" value={baseFund?.promoterHolding != null ? `${Number(baseFund.promoterHolding).toFixed(1)}%` : "--"} sub="skin in game" color={baseFund?.promoterHolding >= 50 ? "green" : "amber"} />
+                  <StatBox label="Div Yield" value={baseFund?.dividendYield != null ? `${Number(baseFund.dividendYield).toFixed(2)}%` : "--"} sub="trailing" />
+                </div>
+              </div>
+              {fi?.topSignals?.length > 0 && (
+                <div className="quality-note">
+                  <strong>Key Signals</strong>
+                  <ul className="signal-list">
+                    {fi.topSignals.slice(0, 4).map((s, i) => <li key={i}>{s}</li>)}
+                  </ul>
                 </div>
               )}
             </div>

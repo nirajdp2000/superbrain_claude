@@ -3077,62 +3077,112 @@ export async function buildDashboard(query = {}) {
     //   2. focus came from analyzeMarket but enrichment silently failed.
     const needsEnrich = !focus.advancedTechnical || !focus.indiaIntelligence || !focus.fundamentalIntelligence;
     if (!liteMode && needsEnrich) {
-      // Candles not stored in snapshot → fetch from cache (15-min TTL, fast)
-      if (enrichCandles.length < 20) {
-        enrichCandles = await getDailyCandles(focus.symbol).catch(() => enrichCandles);
+      try {
+        // Candles not stored in snapshot → fetch from cache (15-min TTL, fast)
+        if (enrichCandles.length < 20) {
+          enrichCandles = await getDailyCandles(focus.symbol).catch(() => enrichCandles);
+        }
+
+        // Strip source:"UNAVAILABLE" so computeEnhancedFundamentalScore doesn't
+        // short-circuit — we still compute QGLP/moat with whatever data exists.
+        // eslint-disable-next-line no-unused-vars
+        const { source: _fs, ...cleanFundamentals } = (focus.fundamentals || {});
+
+        const [indiaRes, fundRes] = await Promise.allSettled([
+          enrichWithIndiaSignals(focus.symbol, focus, marketContext || {}),
+          Promise.resolve(computeEnhancedFundamentalScore(cleanFundamentals, focus, strategy)),
+        ]);
+
+        const ind = indiaRes.status === "fulfilled" ? indiaRes.value : null;
+        let fun   = fundRes.status  === "fulfilled" ? fundRes.value  : null;
+
+        // Failsafe: if computeEnhancedFundamentalScore returned null/undefined or
+        // available:false, synthesize from raw fundamentals so frontend has data.
+        if (!fun || fun.available === false) {
+          const f = cleanFundamentals;
+          fun = {
+            available: false,
+            enhancedScore: 50,
+            qglp: { totalScore: null, scores: {}, signals: [], peg: null, verdict: null },
+            coffeeCan: { score: null, metCount: 0, totalCriteria: 5 },
+            moat: { moatWidth: "NONE", moatScore: null, moatType: null },
+            lynch: { category: "UNKNOWN" },
+            redFlags: { flags: [], severity: 0 },
+            fundamentalQuality:
+              (f?.roe >= 18 && f?.roce >= 18) ? "HIGH"
+              : (f?.roe >= 12 || f?.roce >= 12) ? "MEDIUM"
+              : f?.roe != null ? "LOW"
+              : "N/A",
+            topSignals: [
+              f?.roe != null ? `ROE ${Number(f.roe).toFixed(1)}%` : null,
+              f?.roce != null ? `ROCE ${Number(f.roce).toFixed(1)}%` : null,
+              f?.salesGrowth3yr != null ? `Sales 3y ${Number(f.salesGrowth3yr).toFixed(0)}%` : null,
+              f?.profitGrowth3yr != null ? `Profit 3y ${Number(f.profitGrowth3yr).toFixed(0)}%` : null,
+            ].filter(Boolean),
+          };
+        }
+
+        // Use base score from whichever technical field exists (fresh rows use technicalSnapshot)
+        const baseScore = focus.technical?.score ?? focus.technicalSnapshot?.score ?? 50;
+        const advRaw = enrichCandles.length >= 20
+          ? computeEnhancedTechnicalScore(enrichCandles, baseScore)
+          : null;
+
+        // Failsafe: synthesize advancedTechnical when candles unavailable so the
+        // section still renders (using base technical fields the user already sees).
+        let advFinal;
+        if (advRaw && advRaw.adx) {
+          advFinal = {
+            adx:           advRaw.adx,
+            supertrend:    advRaw.supertrend,
+            wyckoff:       advRaw.wyckoff,
+            elliottWave:   advRaw.elliottWave,
+            chartPatterns: advRaw.chartPatterns,
+            volumeProfile: advRaw.volumeProfile,
+            signals:       advRaw.signals,
+            delta:         advRaw.delta,
+          };
+        } else {
+          const t = focus.technical || focus.technicalSnapshot || {};
+          advFinal = {
+            adx: null,
+            supertrend: { direction: t.trendBias === "BULLISH" ? "BULLISH" : t.trendBias === "BEARISH" ? "BEARISH" : "NEUTRAL", justFlipped: false },
+            wyckoff: { phase: "UNKNOWN", bias: "NEUTRAL", confidence: 0 },
+            elliottWave: { wavePosition: "UNKNOWN", confidence: 0 },
+            chartPatterns: { patterns: [], primaryPattern: null },
+            volumeProfile: null,
+            signals: [],
+            delta: 0,
+            _synthetic: true,
+            _reason: "Candles unavailable on cloud — showing base trend bias only",
+          };
+        }
+
+        focus = {
+          ...focus,
+          advancedTechnical: advFinal,
+          indiaIntelligence: ind ? {
+            signals:       ind.signals,
+            giftNifty:     ind.giftNifty,
+            upcomingEvents: ind.upcomingEvents,
+            sectorRotation: ind.sectorRotation,
+            resultsSeason:  ind.resultsSeason,
+            delta:          ind.indiaDelta,
+          } : null,
+          fundamentalIntelligence: {
+            available:          fun.available ?? false,
+            qglp:               fun.qglp              || null,
+            coffeeCan:          fun.coffeeCan         || null,
+            moat:               fun.moat               || null,
+            lynch:              fun.lynch              || null,
+            redFlags:           fun.redFlags           || null,
+            fundamentalQuality: fun.fundamentalQuality || "N/A",
+            topSignals:         fun.topSignals         || [],
+          },
+        };
+      } catch (err) {
+        console.warn("[buildDashboard] enrichment failed:", err.message);
       }
-
-      // Strip source:"UNAVAILABLE" so computeEnhancedFundamentalScore doesn't
-      // short-circuit — we still compute QGLP/moat with whatever data exists.
-      // eslint-disable-next-line no-unused-vars
-      const { source: _fs, ...cleanFundamentals } = (focus.fundamentals || {});
-
-      const [indiaRes, fundRes] = await Promise.allSettled([
-        enrichWithIndiaSignals(focus.symbol, focus, marketContext || {}),
-        Promise.resolve(computeEnhancedFundamentalScore(cleanFundamentals, focus, strategy)),
-      ]);
-
-      const ind    = indiaRes.status === "fulfilled" ? indiaRes.value : null;
-      const fun    = fundRes.status  === "fulfilled" ? fundRes.value  : null;
-      // Use base score from whichever technical field exists (fresh rows use technicalSnapshot)
-      const baseScore = focus.technical?.score ?? focus.technicalSnapshot?.score ?? 50;
-      const advRaw = enrichCandles.length >= 20
-        ? computeEnhancedTechnicalScore(enrichCandles, baseScore)
-        : null;
-
-      focus = {
-        ...focus,
-        advancedTechnical: (advRaw && advRaw.adx) ? {
-          adx:           advRaw.adx,
-          supertrend:    advRaw.supertrend,
-          wyckoff:       advRaw.wyckoff,
-          elliottWave:   advRaw.elliottWave,
-          chartPatterns: advRaw.chartPatterns,
-          volumeProfile: advRaw.volumeProfile,
-          signals:       advRaw.signals,
-          delta:         advRaw.delta,
-        } : null,
-        indiaIntelligence: ind ? {
-          signals:       ind.signals,
-          giftNifty:     ind.giftNifty,
-          upcomingEvents: ind.upcomingEvents,
-          sectorRotation: ind.sectorRotation,
-          resultsSeason:  ind.resultsSeason,
-          delta:          ind.indiaDelta,
-        } : null,
-        // Always set fundamentalIntelligence — even with partial data it's
-        // better than null; fundamentalQuality defaults to "N/A" when sparse.
-        fundamentalIntelligence: fun ? {
-          available:         fun.available ?? false,
-          qglp:              fun.qglp              || null,
-          coffeeCan:         fun.coffeeCan         || null,
-          moat:              fun.moat               || null,
-          lynch:             fun.lynch              || null,
-          redFlags:          fun.redFlags           || null,
-          fundamentalQuality: fun.fundamentalQuality || "N/A",
-          topSignals:        fun.topSignals         || [],
-        } : null,
-      };
     }
 
     const toEnrich = liteMode
