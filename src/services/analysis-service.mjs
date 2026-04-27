@@ -1,5 +1,5 @@
 import { getDefaultWatchlist, getUniverse } from "../data/universe.mjs";
-import { getMarketContext, resolveStockBundle } from "./market-service.mjs";
+import { getMarketContext, resolveStockBundle, getDailyCandles } from "./market-service.mjs";
 import { getNewsForSymbols, getNewsIntelligence, summarizeSymbolNews } from "./news-service.mjs";
 import { resolveQueryCandidates, resolveStockAny, resolveStocksAny, searchAnyUniverse } from "./universe-service.mjs";
 import { enrichWithOptionsData, getIndiaVix } from "./options-service.mjs";
@@ -3043,9 +3043,64 @@ export async function buildDashboard(query = {}) {
   }
 
   if (focus) {
+    let enrichCandles = focusCandles;
+
+    // ── Phase 1-5 enrichment for snapshot-cached focus ────────────────────
+    // _snapshotToLeaderRow strips advancedTechnical / indiaIntelligence /
+    // fundamentalIntelligence because the snapshot only stores verdicts.
+    // Re-run those three engines here so the Advanced tab has live data.
+    if (!liteMode && focus._fromCache) {
+      // Candles not stored in snapshot → fetch from cache (15-min TTL, fast)
+      if (enrichCandles.length < 20) {
+        enrichCandles = await getDailyCandles(focus.symbol).catch(() => enrichCandles);
+      }
+
+      const [indiaRes, fundRes] = await Promise.allSettled([
+        enrichWithIndiaSignals(focus.symbol, focus, marketContext || {}),
+        Promise.resolve(computeEnhancedFundamentalScore(focus.fundamentals, focus, strategy)),
+      ]);
+
+      const ind    = indiaRes.status === "fulfilled" ? indiaRes.value : null;
+      const fun    = fundRes.status  === "fulfilled" ? fundRes.value  : null;
+      const advRaw = enrichCandles.length >= 20
+        ? computeEnhancedTechnicalScore(enrichCandles, focus.technical?.score || 50)
+        : null;
+
+      focus = {
+        ...focus,
+        advancedTechnical: advRaw ? {
+          adx:           advRaw.adx,
+          supertrend:    advRaw.supertrend,
+          wyckoff:       advRaw.wyckoff,
+          elliottWave:   advRaw.elliottWave,
+          chartPatterns: advRaw.chartPatterns,
+          volumeProfile: advRaw.volumeProfile,
+          signals:       advRaw.signals,
+          delta:         advRaw.delta,
+        } : null,
+        indiaIntelligence: ind ? {
+          signals:       ind.signals,
+          giftNifty:     ind.giftNifty,
+          upcomingEvents: ind.upcomingEvents,
+          sectorRotation: ind.sectorRotation,
+          resultsSeason:  ind.resultsSeason,
+          delta:          ind.indiaDelta,
+        } : null,
+        fundamentalIntelligence: fun?.available ? {
+          qglp:              fun.qglp,
+          coffeeCan:         fun.coffeeCan,
+          moat:              fun.moat,
+          lynch:             fun.lynch,
+          redFlags:          fun.redFlags,
+          fundamentalQuality: fun.fundamentalQuality,
+          topSignals:        fun.topSignals,
+        } : null,
+      };
+    }
+
     const toEnrich = liteMode
       ? focus
-      : await enrichRowDeep(focus, focusCandles, marketContext || {}).catch(() => focus);
+      : await enrichRowDeep(focus, enrichCandles, marketContext || {}).catch(() => focus);
     focus     = attachMarketWideContext(toEnrich, marketWideOpportunities);
     watchlist = [focus, ...allRows.slice(1)];
   }
