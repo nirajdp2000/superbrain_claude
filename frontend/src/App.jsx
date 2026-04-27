@@ -1875,7 +1875,9 @@ function AdvancedIntelPanel({ focus, dashboard }) {
   const opts  = focus?.optionsIntelligence;
   const adv   = focus?.advancedTechnical;
   const fi    = focus?.fundamentalIntelligence;
-  const india = focus?.indiaIntelligence;
+  // Use stock-specific india intel first; fall back to global dashboard intel
+  // (events, GIFT NIFTY, sector rotation available even before stock search)
+  const india = focus?.indiaIntelligence || dashboard?.globalIndiaIntel || null;
 
   if (!focus) return (
     <Empty text="Search for any NSE stock to activate Advanced Intelligence — options chain, technical indicators, fundamental frameworks, and India-specific signals." />
@@ -1910,8 +1912,8 @@ function AdvancedIntelPanel({ focus, dashboard }) {
       id: "india",
       label: "India Intel",
       icon: "⊕",
-      value: india?.giftNifty?.gapType ? fmtTag(india.giftNifty.gapType) : india ? "Loaded" : "No stock",
-      sub: india ? `${(india.signals || []).length} active signal(s)` : "Search a stock",
+      value: india?.giftNifty?.gapType ? fmtTag(india.giftNifty.gapType) : india ? "Market Live" : "No data",
+      sub: india ? `${(india.signals || []).length} active signal(s)` : "Loading…",
       color: india?.giftNifty?.gapType?.includes("UP") ? "adv-c-green" : india?.giftNifty?.gapType?.includes("DOWN") ? "adv-c-red" : "adv-c-amber",
     },
   ];
@@ -2341,10 +2343,13 @@ function AdvancedIntelPanel({ focus, dashboard }) {
               </div>
             )}
             {!india && (
-              <div className="quality-note">
-                <strong>India Intelligence requires stock search</strong>
-                <p>Search for any NSE stock to get GIFT NIFTY signal, event calendar, sector rotation, results season status, and India-specific score adjustments.</p>
+              <div className="quality-note" style={{borderColor:"var(--amber)"}}>
+                <strong>India market data loading…</strong>
+                <p>GIFT NIFTY signal, event calendar, sector rotation, and results season status will appear here once the backend warms up. Refresh in a few seconds.</p>
               </div>
+            )}
+            {india && !focus?.indiaIntelligence && (
+              <p className="muted" style={{marginTop:"0.5rem", fontSize:"11px"}}>Showing global market data. Search a stock for symbol-specific sector signals.</p>
             )}
           </div>
         </div>

@@ -3042,14 +3042,36 @@ export async function buildDashboard(query = {}) {
     marketWideOpportunities = null;
   }
 
+  // ── Always compute global India intel for the Advanced tab ──────────────
+  // This runs regardless of focus stock state, giving AdvancedIntelPanel
+  // GIFT NIFTY / events / sector rotation even before a stock is searched.
+  let globalIndiaIntel = null;
+  if (!liteMode) {
+    try {
+      const rawGlobalIndia = await enrichWithIndiaSignals("", {}, marketContext || {});
+      if (rawGlobalIndia) {
+        globalIndiaIntel = {
+          signals:       rawGlobalIndia.signals       || [],
+          giftNifty:     rawGlobalIndia.giftNifty     || null,
+          upcomingEvents: rawGlobalIndia.upcomingEvents || [],
+          sectorRotation: rawGlobalIndia.sectorRotation || [],
+          resultsSeason:  rawGlobalIndia.resultsSeason  || null,
+          delta:          rawGlobalIndia.indiaDelta      || 0,
+        };
+      }
+    } catch { /* non-fatal */ }
+  }
+
   if (focus) {
     let enrichCandles = focusCandles;
 
-    // ── Phase 1-5 enrichment for snapshot-cached focus ────────────────────
-    // _snapshotToLeaderRow strips advancedTechnical / indiaIntelligence /
-    // fundamentalIntelligence because the snapshot only stores verdicts.
-    // Re-run those three engines here so the Advanced tab has live data.
-    if (!liteMode && focus._fromCache) {
+    // ── Phase 1-5 enrichment when enrichment fields are missing ───────────
+    // Covers two cases:
+    //   1. focus came from _snapshotToLeaderRow (_fromCache=true) — snapshot
+    //      stores verdicts only, not advanced/india/fundamental intelligence.
+    //   2. focus came from analyzeMarket but enrichment silently failed.
+    const needsEnrich = !focus.advancedTechnical || !focus.indiaIntelligence || !focus.fundamentalIntelligence;
+    if (!liteMode && needsEnrich) {
       // Candles not stored in snapshot → fetch from cache (15-min TTL, fast)
       if (enrichCandles.length < 20) {
         enrichCandles = await getDailyCandles(focus.symbol).catch(() => enrichCandles);
@@ -3115,6 +3137,7 @@ export async function buildDashboard(query = {}) {
     snapshotId:            focusSnapshotId,   // Phase 1.7 — asOf banner
     asOf:                  focusAsOf,         // Phase 1.7 — asOf banner
     marketContext,
+    globalIndiaIntel,      // Advanced tab India section — always populated
     focus,
     marketWideOpportunities,
     leaders:   watchlist.slice(0, 4),
