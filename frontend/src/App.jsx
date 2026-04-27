@@ -1978,9 +1978,46 @@ function AdvancedIntelPanel({ focus, dashboard }) {
       {section === "options" && (
         <div className="adv-body">
           {!opts ? (
-            <div className="adv-unavail">
-              <div className="adv-unavail-title">⚠ Options chain unavailable</div>
-              <p>NSE options chain (PCR, max pain, OI walls, India VIX) is geo-restricted from Netlify cloud. Connect via Upstox or run locally to activate full options intelligence.</p>
+            <div className="lt-wrap">
+              <div className="adv-fallback-head">
+                <div className="adv-fallback-title">
+                  <Kicker>Options Snapshot — Implied Direction</Kicker>
+                  <div className="adv-fallback-subtitle adv-c-amber">
+                    NSE chain geo-restricted · using technical proxy
+                  </div>
+                </div>
+                <div className="adv-fallback-pill adv-fallback-pill-amber">
+                  <span className="adv-fallback-pill-label">BIAS</span>
+                  <strong>{baseTech?.trendBias || "NEUTRAL"}</strong>
+                  <span className="adv-fallback-pill-sub">from technicals</span>
+                </div>
+              </div>
+              <div className="quality-note" style={{borderColor:"var(--amber)"}}>
+                <strong>⚠ Options chain unavailable</strong>
+                <p>NSE options chain (PCR, max pain, OI walls, India VIX) is geo-restricted from Netlify cloud. Connect via <strong>Upstox</strong> (button top-right) or run locally to activate full options intelligence — PCR, max pain, OI walls, expiry analysis.</p>
+              </div>
+              <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                <Kicker>Implied Direction Proxy</Kicker>
+                <p className="muted" style={{marginBottom:"0.75rem"}}>
+                  While options data unavailable, technical structure suggests directional bias:
+                </p>
+                <div className="verdict-stats">
+                  <StatBox label="Trend Bias" value={baseTech?.trendBias || "NEUTRAL"} sub="from technicals" color={baseTech?.trendBias === "BULLISH" ? "green" : baseTech?.trendBias === "BEARISH" ? "red" : "amber"} />
+                  <StatBox label="Regime" value={baseTech?.regime?.label || "TRANSITIONAL"} sub="market state" color={baseTech?.regime?.label === "TRENDING" ? "green" : "amber"} />
+                  <StatBox label="MACD" value={fmtTag(baseTech?.macd?.posture || "Unknown")} sub="momentum posture" color={baseTech?.macd?.histogram > 0 ? "green" : "red"} />
+                  <StatBox label="RSI 14" value={baseTech?.rsi14 != null ? Number(baseTech.rsi14).toFixed(1) : "--"} sub={baseTech?.rsi14 > 70 ? "Overbought" : baseTech?.rsi14 < 30 ? "Oversold" : "Neutral"} color={baseTech?.rsi14 > 70 ? "red" : baseTech?.rsi14 < 30 ? "green" : "amber"} />
+                </div>
+              </div>
+              <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                <Kicker>What You'll Unlock With Upstox</Kicker>
+                <ul className="signal-list">
+                  <li><strong>PCR (Put-Call Ratio)</strong> — sentiment gauge; &gt;1.2 bullish, &lt;0.8 bearish</li>
+                  <li><strong>Max Pain</strong> — strike where option writers lose least; price often gravitates here at expiry</li>
+                  <li><strong>OI Walls</strong> — heavy call/put writing zones acting as resistance/support</li>
+                  <li><strong>India VIX</strong> — fear gauge; calm = sell premium, fear = buy premium</li>
+                  <li><strong>Directional Bias</strong> — composite signal blending PCR, OI, VIX</li>
+                </ul>
+              </div>
             </div>
           ) : (
             <div className="lt-wrap">
@@ -2055,17 +2092,17 @@ function AdvancedIntelPanel({ focus, dashboard }) {
         <div className="adv-body">
           {(!adv || adv._synthetic) ? (
             <div className="lt-wrap">
-              <div className="lt-head">
-                <div>
+              <div className="adv-fallback-head">
+                <div className="adv-fallback-title">
                   <Kicker>Technical Snapshot — Base Indicators</Kicker>
-                  <div className={`lt-stance lt-${baseTech?.score >= 60 ? "green" : baseTech?.score < 40 ? "red" : "amber"}`}>
-                    Trend: {baseTech?.trendBias || "NEUTRAL"} · Regime: {baseTech?.regime?.label || "TRANSITIONAL"}
+                  <div className={`adv-fallback-subtitle adv-c-${baseTech?.score >= 60 ? "green" : baseTech?.score < 40 ? "red" : "amber"}`}>
+                    Trend {baseTech?.trendBias || "NEUTRAL"} · Regime {baseTech?.regime?.label || "TRANSITIONAL"}
                   </div>
                 </div>
-                <div className={`lt-score score-${baseTech?.rsi14 > 70 ? "red" : baseTech?.rsi14 < 30 ? "green" : "amber"}`}>
-                  <span>RSI 14</span>
+                <div className={`adv-fallback-pill adv-fallback-pill-${baseTech?.rsi14 > 70 ? "red" : baseTech?.rsi14 < 30 ? "green" : "amber"}`}>
+                  <span className="adv-fallback-pill-label">RSI 14</span>
                   <strong>{baseTech?.rsi14 != null ? Number(baseTech.rsi14).toFixed(1) : "--"}</strong>
-                  <span>{baseTech?.rsi14 > 70 ? "Overbought" : baseTech?.rsi14 < 30 ? "Oversold" : "Neutral"}</span>
+                  <span className="adv-fallback-pill-sub">{baseTech?.rsi14 > 70 ? "Overbought" : baseTech?.rsi14 < 30 ? "Oversold" : "Neutral"}</span>
                 </div>
               </div>
               {Object.keys(baseTech).length > 0 && (
@@ -2224,17 +2261,17 @@ function AdvancedIntelPanel({ focus, dashboard }) {
         <div className="adv-body">
           {(!fi || fi.available === false) ? (
             <div className="lt-wrap">
-              <div className="lt-head">
-                <div>
+              <div className="adv-fallback-head">
+                <div className="adv-fallback-title">
                   <Kicker>Fundamentals Snapshot — Base Metrics</Kicker>
-                  <div className={`lt-stance lt-${baseFund?.roe >= 18 ? "green" : baseFund?.roe < 10 ? "red" : "amber"}`}>
-                    Quality: {fi?.fundamentalQuality || "N/A"} · Sector: {focus?.sector || "—"}
+                  <div className={`adv-fallback-subtitle adv-c-${baseFund?.roe >= 18 ? "green" : baseFund?.roe < 10 ? "red" : "amber"}`}>
+                    Quality {fi?.fundamentalQuality || "N/A"} · Sector {focus?.sector || "—"}
                   </div>
                 </div>
-                <div className={`lt-score score-${baseFund?.roe >= 18 ? "green" : baseFund?.roe < 10 ? "red" : "amber"}`}>
-                  <span>ROE</span>
+                <div className={`adv-fallback-pill adv-fallback-pill-${baseFund?.roe >= 18 ? "green" : baseFund?.roe < 10 ? "red" : "amber"}`}>
+                  <span className="adv-fallback-pill-label">ROE</span>
                   <strong>{baseFund?.roe != null ? `${Number(baseFund.roe).toFixed(1)}%` : "--"}</strong>
-                  <span>{baseFund?.roe >= 18 ? "Strong" : baseFund?.roe >= 12 ? "Good" : "Weak"}</span>
+                  <span className="adv-fallback-pill-sub">{baseFund?.roe >= 18 ? "Strong" : baseFund?.roe >= 12 ? "Good" : "Weak"}</span>
                 </div>
               </div>
               <div className="detail-card" style={{marginBottom:"0.75rem"}}>
