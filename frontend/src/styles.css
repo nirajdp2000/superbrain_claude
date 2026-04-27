@@ -4368,4 +4368,141 @@ body {
   box-shadow: 0 26px 60px rgba(12, 24, 48, 0.14);
 }
 
+/* ═══════════════════════════════════════════════════════
+   ADVANCED INTELLIGENCE PANEL
+   ═══════════════════════════════════════════════════════ */
+
+.adv-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Domain strip — 4 clickable cards that act as sub-nav */
+.adv-domain-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+.adv-domain-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 18px 16px 16px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(14px);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  position: relative;
+}
+
+.adv-domain-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+  border-color: var(--border-strong);
+}
+
+.adv-domain-active {
+  border-color: var(--cyan) !important;
+  box-shadow: 0 0 0 3px rgba(42, 103, 191, 0.1), var(--shadow) !important;
+}
+
+.adv-domain-active::after {
+  content: "";
+  position: absolute;
+  bottom: -11px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 28px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--cyan);
+}
+
+.adv-domain-icon {
+  font-size: 20px;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
+.adv-domain-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.adv-domain-value {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  font-family: "IBM Plex Mono", monospace;
+  margin: 3px 0 1px;
+  letter-spacing: -0.01em;
+}
+
+.adv-domain-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Section body — fade-in on section switch */
+.adv-body {
+  display: flex;
+  flex-direction: column;
+  animation: advFadeIn 0.2s ease;
+}
+
+@keyframes advFadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Unavailable state card */
+.adv-unavail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 24px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+  box-shadow: var(--shadow-soft);
+}
+
+.adv-unavail-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--amber);
+}
+
+.adv-unavail p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+/* Color tokens for domain values */
+.adv-c-green { color: var(--green); }
+.adv-c-red   { color: var(--red); }
+.adv-c-amber { color: var(--amber); }
+.adv-c-cyan  { color: var(--cyan); }
+
+/* Responsive: 2-col on narrow viewports */
+@media (max-width: 900px) {
+  .adv-domain-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 

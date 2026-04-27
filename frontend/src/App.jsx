@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import TopSignalsTab from "./TopSignalsTab.jsx";
 import "./styles.css";
 
@@ -1884,464 +1884,498 @@ function GodLevelReportPanel({ focus }) {
 }
 
 // ═══════════════════════════════════════════════════════
-// OPTIONS INTELLIGENCE PANEL (Phase 4)
+// ADVANCED INTELLIGENCE PANEL — Unified (Phase 2·3·4·5)
+// Combines: Options · Technical · Fundamentals · India
 // ═══════════════════════════════════════════════════════
-function OptionsIntelPanel({ focus }) {
-  const opts = focus?.optionsIntelligence;
-  if (!focus) return <Empty text="Search for any NSE stock to view Options Intelligence — PCR, max pain, OI walls, India VIX, and options strategy suggestions." />;
-  if (!opts) return (
-    <div className="lt-wrap">
-      <Kicker>Options Intelligence</Kicker>
-      <div className="quality-note">
-        <strong>Options data loading…</strong>
-        <p>Search for NIFTY, BANKNIFTY, or any NSE F&O stock (RELIANCE, TCS, HDFCBANK…) to activate this panel. Options chain data requires a live NSE connection.</p>
-      </div>
-    </div>
-  );
+function AdvancedIntelPanel({ focus, dashboard }) {
+  const [section, setSection] = useState("technical");
 
-  const pcrColor = opts.pcrSignal?.includes("BULLISH") ? "green" : opts.pcrSignal?.includes("BEARISH") ? "red" : "amber";
-  const biasColor = opts.directionalBias === "BULLISH" ? "green" : opts.directionalBias === "BEARISH" ? "red" : "amber";
-  const vixColor = opts.vixSignal === "EXTREME_FEAR" ? "red" : opts.vixSignal === "HIGH_FEAR" ? "red" : opts.vixSignal === "CALM" || opts.vixSignal === "EXTREME_COMPLACENCY" ? "green" : "amber";
-
-  return (
-    <div className="lt-wrap">
-      <div className="lt-head">
-        <div>
-          <Kicker>Options Intelligence — Phase 4</Kicker>
-          <div className={`lt-stance lt-${biasColor}`}>{opts.directionalBias || "NEUTRAL"}</div>
-        </div>
-        <div className={`lt-score score-${pcrColor}`}>
-          <span>PCR</span>
-          <strong>{opts.pcr != null ? Number(opts.pcr).toFixed(2) : "--"}</strong>
-          <span>{fmtTag(opts.pcrSignal || "Unknown")}</span>
-        </div>
-      </div>
-      {opts.optionsChainAvailable === false && (
-        <div className="quality-note" style={{ borderColor: "var(--amber)", marginBottom: "0.75rem" }}>
-          <strong>⚠ Options chain unavailable from cloud</strong>
-          <p>NSE options chain API is geo-restricted from Netlify cloud servers. India VIX is shown below via Yahoo Finance. For full chain data (PCR, max pain, OI walls) connect via Upstox or run locally.</p>
-        </div>
-      )}
-      {opts.optionsChainAvailable !== false && <p className="muted">{opts.summary || "Options chain analysis active."}</p>}
-      {opts.vix != null && (
-        <div className="quality-note" style={{borderColor: opts.vixSignal?.includes("FEAR") ? "var(--red)" : "var(--green)"}}>
-          <strong>India VIX: {Number(opts.vix).toFixed(1)}</strong>
-          <p>Signal: {fmtTag(opts.vixSignal || "Unknown")} — {opts.vixSignal === "EXTREME_FEAR" ? "Market panic — options premium very high. Sell premium." : opts.vixSignal === "CALM" ? "Low volatility — buy options cheaply. Pre-event straddles." : "VIX in normal zone."}</p>
-        </div>
-      )}
-      <div className="verdict-stats">
-        <StatBox label="PCR" value={opts.pcr != null ? Number(opts.pcr).toFixed(2) : "--"} sub={fmtTag(opts.pcrSignal || "")} color={pcrColor} />
-        <StatBox label="Max Pain" value={opts.maxPainStrike || "--"} sub={opts.maxPainDistance != null ? `${opts.maxPainDistance > 0 ? "+" : ""}${Number(opts.maxPainDistance).toFixed(1)}% from spot` : "distance"} />
-        <StatBox label="Put Wall" value={opts.supportLevel || "--"} sub="OI support zone" color="green" />
-        <StatBox label="Call Wall" value={opts.resistanceLevel || "--"} sub="OI resistance zone" color="red" />
-        <StatBox label="India VIX" value={opts.vix != null ? Number(opts.vix).toFixed(1) : "--"} sub={fmtTag(opts.vixSignal || "")} color={vixColor} />
-        <StatBox label="Expiry" value={opts.expiry || "--"} sub="nearest expiry" />
-      </div>
-      <div className="split-grid">
-        <div className="split-card">
-          <Kicker>Call OI Walls — Resistance</Kicker>
-          <ul className="signal-list">
-            {(opts.oiWalls?.call || []).slice(0, 5).map((w) => (
-              <li key={w.strike}>Strike {w.strike} — OI {(w.oi / 100).toFixed(0)}L contracts</li>
-            ))}
-            {!(opts.oiWalls?.call?.length) && <li>No significant call walls detected</li>}
-          </ul>
-        </div>
-        <div className="split-card">
-          <Kicker>Put OI Walls — Support</Kicker>
-          <ul className="signal-list">
-            {(opts.oiWalls?.put || []).slice(0, 5).map((w) => (
-              <li key={w.strike}>Strike {w.strike} — OI {(w.oi / 100).toFixed(0)}L contracts</li>
-            ))}
-            {!(opts.oiWalls?.put?.length) && <li>No significant put walls detected</li>}
-          </ul>
-        </div>
-      </div>
-      <div className="detail-card" style={{marginTop: "1rem"}}>
-        <Kicker>How to Use This Data</Kicker>
-        <ul className="signal-list">
-          <li>PCR {opts.pcr > 1.2 ? "> 1.2 = Put writers outnumber call writers → Bullish bias" : opts.pcr < 0.8 ? "< 0.8 = Call writers outnumber put writers → Bearish bias" : "near 1.0 = Neutral market sentiment"}</li>
-          <li>Max Pain {opts.maxPainStrike} = Strike where option writers lose least. Markets often gravitate here near expiry.</li>
-          <li>Call Wall at {opts.resistanceLevel || "--"} = Heavy short positions by option writers — strong resistance.</li>
-          <li>Put Wall at {opts.supportLevel || "--"} = Heavy short positions by put writers — strong support floor.</li>
-        </ul>
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════
-// ADVANCED TECHNICAL PANEL (Phase 2)
-// ═══════════════════════════════════════════════════════
-function AdvTechnicalPanel({ focus }) {
-  const adv = focus?.advancedTechnical;
-  if (!focus) return <Empty text="Search for a stock to view advanced technical analysis." />;
-  if (!adv) return (
-    <div className="lt-wrap">
-      <Kicker>Advanced Technical Analysis</Kicker>
-      <div className="quality-note">
-        <strong>Advanced indicators loading</strong>
-        <p>ADX, Supertrend, Wyckoff, Elliott Wave, and chart patterns require daily candle history. Search for any stock to compute these.</p>
-      </div>
-    </div>
-  );
-
-  const stColor = adv.supertrend?.direction === "BULLISH" ? "green" : "red";
-  const adxColor = adv.adx?.trendStrength === "STRONG_TREND" || adv.adx?.trendStrength === "TREND" ? "green" : adv.adx?.trendStrength === "RANGING" ? "red" : "amber";
-  const wyckoffColor = adv.wyckoff?.bias === "BULLISH" ? "green" : adv.wyckoff?.bias === "BEARISH" ? "red" : "amber";
-  const ewColor = adv.elliottWave?.wavePosition?.includes("BULLISH") ? "green" : adv.elliottWave?.wavePosition?.includes("BEARISH") ? "red" : "amber";
-
-  return (
-    <div className="lt-wrap">
-      <div className="lt-head">
-        <div>
-          <Kicker>Advanced Technical Analysis — Phase 2</Kicker>
-          <div className={`lt-stance lt-${stColor}`}>
-            Supertrend: {adv.supertrend?.direction || "--"}
-            {adv.supertrend?.justFlipped ? " ★ JUST FLIPPED" : ""}
-          </div>
-        </div>
-        <div className={`lt-score score-${adxColor}`}>
-          <span>ADX</span>
-          <strong>{adv.adx?.adx != null ? Number(adv.adx.adx).toFixed(1) : "--"}</strong>
-          <span>{fmtTag(adv.adx?.trendStrength || "")}</span>
-        </div>
-      </div>
-
-      {/* ADX */}
-      <div className="detail-card" style={{marginBottom: "0.75rem"}}>
-        <Kicker>ADX — Trend Strength (Ch.5.3)</Kicker>
-        <div className="verdict-stats">
-          <StatBox label="ADX" value={adv.adx?.adx != null ? Number(adv.adx.adx).toFixed(1) : "--"} sub={fmtTag(adv.adx?.trendStrength || "")} color={adxColor} />
-          <StatBox label="DI+" value={adv.adx?.diPlus != null ? Number(adv.adx.diPlus).toFixed(1) : "--"} sub="bullish force" color="green" />
-          <StatBox label="DI-" value={adv.adx?.diMinus != null ? Number(adv.adx.diMinus).toFixed(1) : "--"} sub="bearish force" color="red" />
-        </div>
-        <p className="muted">
-          {adv.adx?.trendStrength === "RANGING" ? "ADX < 20: Market is range-bound. Trend signals suppressed — avoid breakout trades. Mean-reversion strategies preferred." :
-           adv.adx?.trendStrength === "STRONG_TREND" ? "ADX > 40: Very strong trend. Ride the trend. Do not fade against it." :
-           adv.adx?.signal === "UPTREND_CONFIRMED" ? "ADX confirms uptrend with DI+ dominant. Trend-following longs valid." :
-           adv.adx?.signal === "DOWNTREND_CONFIRMED" ? "ADX confirms downtrend with DI- dominant. Trend-following shorts valid." : "Weak trend — trade with caution."}
-        </p>
-      </div>
-
-      {/* Supertrend */}
-      <div className="detail-card" style={{marginBottom: "0.75rem"}}>
-        <Kicker>Supertrend — India Favourite (Ch.5.3)</Kicker>
-        <div className="coverage-list">
-          <span>Direction {adv.supertrend?.direction || "--"}</span>
-          <span>Level {adv.supertrend?.value != null ? Number(adv.supertrend.value).toFixed(1) : "--"}</span>
-          <span>Price vs ST {adv.supertrend?.priceVsSupertrend || "--"}</span>
-          <span>Signal {fmtTag(adv.supertrend?.signal || "")}</span>
-        </div>
-        {adv.supertrend?.justFlipped && (
-          <div className="quality-note" style={{borderColor: adv.supertrend.direction === "BULLISH" ? "var(--green)" : "var(--red)"}}>
-            <strong>Supertrend just flipped {adv.supertrend.direction}</strong>
-            <p>Direction change signal — one of the highest-quality trend reversal signals in Indian markets.</p>
-          </div>
-        )}
-      </div>
-
-      {/* Wyckoff */}
-      <div className="detail-card" style={{marginBottom: "0.75rem"}}>
-        <Kicker>Wyckoff Phase (Ch.12)</Kicker>
-        <div className={`lt-stance lt-${wyckoffColor}`} style={{fontSize:"14px", marginBottom:"0.5rem"}}>
-          {["UNCLEAR","UNKNOWN","UNDEFINED"].includes(adv.wyckoff?.phase) ? "Phase Unclear" : fmtTag(adv.wyckoff?.phase || "Unknown")}
-        </div>
-        <div className="coverage-list">
-          <span>Event {adv.wyckoff?.event ? fmtTag(adv.wyckoff.event) : "—"}</span>
-          <span>Volume {fmtTag(adv.wyckoff?.volumeTrend || "--")}</span>
-          <span>20d price {adv.wyckoff?.priceTrend20d != null ? `${Number(adv.wyckoff.priceTrend20d) > 0 ? "+" : ""}${Number(adv.wyckoff.priceTrend20d).toFixed(1)}%` : "--"}</span>
-          <span>Confidence {adv.wyckoff?.confidence ?? "--"}%</span>
-        </div>
-        <p className="muted">{adv.wyckoff?.interpretation || "Wyckoff phase unclear — needs more candle history."}</p>
-      </div>
-
-      {/* Elliott Wave */}
-      <div className="detail-card" style={{marginBottom: "0.75rem"}}>
-        <Kicker>Elliott Wave (Ch.12)</Kicker>
-        <div className={`lt-stance lt-${ewColor}`} style={{fontSize:"13px", marginBottom:"0.5rem"}}>
-          {["UNCLEAR","UNKNOWN","INSUFFICIENT_PIVOTS"].includes(adv.elliottWave?.wavePosition) ? "Structure Unclear" : fmtTag(adv.elliottWave?.wavePosition || "Unclear")}
-        </div>
-        <div className="coverage-list">
-          <span>Confidence {adv.elliottWave?.confidence ?? 0}%</span>
-          <span>W3/W1 ratio {adv.elliottWave?.fibRatios?.wave3to1 != null ? Number(adv.elliottWave.fibRatios.wave3to1).toFixed(2) : "--"}</span>
-          {adv.elliottWave?.projection?.wave5Target && <span>W5 target ~{Number(adv.elliottWave.projection.wave5Target).toFixed(1)}</span>}
-        </div>
-        <p className="muted">{adv.elliottWave?.interpretation || "Insufficient pivot data for wave labelling."}</p>
-      </div>
-
-      {/* Chart Patterns */}
-      {adv.chartPatterns?.patterns?.length > 0 && (
-        <div className="detail-card" style={{marginBottom: "0.75rem"}}>
-          <Kicker>Chart Patterns (Ch.6)</Kicker>
-          {adv.chartPatterns.patterns.map((p) => (
-            <div key={p.pattern} style={{marginBottom:"0.75rem"}}>
-              <div className="news-tags">
-                <Badge color={p.bias === "BULLISH" ? "green" : p.bias === "BEARISH" ? "red" : "amber"}>{fmtTag(p.pattern)}</Badge>
-                <Badge color={p.bias === "BULLISH" ? "green" : "red"}>{p.bias}</Badge>
-                <Badge>{p.confidence}% confidence</Badge>
-              </div>
-              <p className="muted" style={{marginTop:"0.25rem"}}>{p.description}</p>
-              {p.target && <p className="muted">Target: ₹{Number(p.target).toFixed(1)}</p>}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Volume Profile */}
-      {adv.volumeProfile?.poc && (
-        <div className="detail-card">
-          <Kicker>Volume Profile — POC (Ch.3, Ch.14)</Kicker>
-          <div className="coverage-list">
-            <span>Point of Control ₹{Number(adv.volumeProfile.poc).toFixed(1)}</span>
-            <span>Signal {fmtTag(adv.volumeProfile.signal || "--")}</span>
-            <span>HVN zones {adv.volumeProfile.hvn?.length || 0}</span>
-            <span>LVN zones {adv.volumeProfile.lvn?.length || 0}</span>
-          </div>
-          <p className="muted">POC = highest-volume price level. Acts as magnet. LVN zones above/below POC = fast-move areas.</p>
-        </div>
-      )}
-
-      {/* Advanced signals list */}
-      {adv.signals?.length > 0 && (
-        <div className="detail-card" style={{marginTop: "0.75rem"}}>
-          <Kicker>All Advanced Signals</Kicker>
-          <ul className="signal-list">
-            {adv.signals.map((s, i) => (
-              <li key={i}><strong>{s.indicator}</strong>: {s.signal}{s.value != null ? ` (${Number(s.value).toFixed(1)})` : ""}</li>
-            ))}
-          </ul>
-          <p className="muted">Net technical delta from advanced signals: {adv.delta > 0 ? "+" : ""}{adv.delta}</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════
-// FUNDAMENTAL FRAMEWORKS PANEL (Phase 3)
-// ═══════════════════════════════════════════════════════
-function FundamentalFrameworksPanel({ focus }) {
-  const fi = focus?.fundamentalIntelligence;
-  if (!focus) return <Empty text="Search for a stock to view fundamental framework analysis." />;
-  if (!fi) return (
-    <div className="lt-wrap">
-      <Kicker>Fundamental Frameworks</Kicker>
-      <div className="quality-note">
-        <strong>Framework analysis loading</strong>
-        <p>QGLP, Coffee Can, SMILE, Moat, and Lynch category analysis requires fundamental data from Screener/Moneycontrol.</p>
-      </div>
-    </div>
-  );
-
-  const qglpColor = fi.qglp?.totalScore >= 70 ? "green" : fi.qglp?.totalScore >= 50 ? "amber" : "red";
-  const ccColor = fi.coffeeCan?.metCount >= 4 ? "green" : fi.coffeeCan?.metCount >= 3 ? "amber" : "red";
-  const moatColor = fi.moat?.moatWidth === "WIDE" ? "green" : fi.moat?.moatWidth === "NARROW" ? "amber" : "red";
-  const qualityColor = fi.fundamentalQuality === "HIGH" ? "green" : fi.fundamentalQuality === "MEDIUM" ? "amber" : "red";
-
-  return (
-    <div className="lt-wrap">
-      <div className="lt-head">
-        <div>
-          <Kicker>Fundamental Frameworks — Phase 3</Kicker>
-          <div className={`lt-stance lt-${qualityColor}`}>Fundamental Quality: {fi.fundamentalQuality || "--"}</div>
-        </div>
-        <div className={`lt-score score-${qglpColor}`}>
-          <span>QGLP</span>
-          <strong>{fi.qglp?.totalScore || "--"}</strong>
-          <span>/ 100</span>
-        </div>
-      </div>
-      {fi.topSignals?.length > 0 && (
-        <div className="quality-note">
-          <strong>Key Signals</strong>
-          <ul className="signal-list">{fi.topSignals.map((s, i) => <li key={i}>{s}</li>)}</ul>
-        </div>
-      )}
-
-      {/* QGLP Framework */}
-      <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-        <Kicker>QGLP — Raamdeo Agrawal (Ch.2.9)</Kicker>
-        <div className="verdict-stats">
-          <StatBox label="Quality" value={fi.qglp?.scores?.quality || "--"} sub="ROE+ROCE+D/E" color={fi.qglp?.scores?.quality >= 60 ? "green" : "amber"} />
-          <StatBox label="Growth" value={fi.qglp?.scores?.growth || "--"} sub="rev+profit growth" color={fi.qglp?.scores?.growth >= 60 ? "green" : "amber"} />
-          <StatBox label="Longevity" value={fi.qglp?.scores?.longevity || "--"} sub="durability" color={fi.qglp?.scores?.longevity >= 60 ? "green" : "amber"} />
-          <StatBox label="Price" value={fi.qglp?.scores?.price || "--"} sub={`PEG ${fi.qglp?.peg != null ? Number(fi.qglp.peg).toFixed(2) : "--"}`} color={fi.qglp?.peg < 1.5 ? "green" : "red"} />
-        </div>
-        <div className="news-tags" style={{marginTop:"0.5rem"}}>
-          <Badge color={qglpColor}>{fi.qglp?.verdict ? fmtTag(fi.qglp.verdict) : "--"}</Badge>
-        </div>
-        <ul className="signal-list" style={{marginTop:"0.5rem"}}>
-          {(fi.qglp?.signals || []).slice(0, 3).map((s, i) => <li key={i}>{s}</li>)}
-        </ul>
-      </div>
-
-      {/* Coffee Can */}
-      <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-        <Kicker>Coffee Can — Saurabh Mukherjea (Ch.2.7)</Kicker>
-        <div className={`lt-stance lt-${ccColor}`} style={{fontSize:"13px", marginBottom:"0.5rem"}}>
-          {fi.coffeeCan?.verdict ? fmtTag(fi.coffeeCan.verdict) : "--"} ({fi.coffeeCan?.metCount || 0}/5 criteria)
-        </div>
-        <ul className="signal-list">
-          {(fi.coffeeCan?.signals || []).map((s, i) => <li key={i}>{s}</li>)}
-        </ul>
-        <p className="muted" style={{marginTop:"0.5rem"}}>{fi.coffeeCan?.interpretation}</p>
-      </div>
-
-      {/* Moat */}
-      <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-        <Kicker>Economic Moat — Warren Buffett (Ch.2.5)</Kicker>
-        <div className="verdict-stats">
-          <StatBox label="Moat Width" value={fi.moat?.moatWidth || "--"} sub={fmtTag(fi.moat?.moatType || "none")} color={moatColor} />
-          <StatBox label="Moat Score" value={fi.moat?.moatScore || "--"} sub="/ 100" color={moatColor} />
-        </div>
-        <ul className="signal-list" style={{marginTop:"0.5rem"}}>
-          {(fi.moat?.moatSignals || []).slice(0, 3).map((s, i) => <li key={i}>{s}</li>)}
-        </ul>
-        <p className="muted">{fi.moat?.interpretation}</p>
-      </div>
-
-      {/* Peter Lynch Category */}
-      <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-        <Kicker>Peter Lynch Category (Ch.2.4)</Kicker>
-        <div className="news-tags">
-          <Badge color="amber">{fmtTag(fi.lynch?.category || "--")}</Badge>
-          {fi.lynch?.avgGrowth != null && <Badge>{Number(fi.lynch.avgGrowth).toFixed(1)}% avg growth</Badge>}
-        </div>
-        <p className="muted" style={{marginTop:"0.5rem"}}>{fi.lynch?.strategy}</p>
-        <p className="muted">{fi.lynch?.signal}</p>
-      </div>
-
-      {/* Accounting Red Flags */}
-      {fi.redFlags && (
-        <div className="detail-card" style={{borderLeft: fi.redFlags.riskLevel === "HIGH" ? "3px solid var(--red)" : fi.redFlags.riskLevel === "MEDIUM" ? "3px solid var(--amber)" : "3px solid var(--green)"}}>
-          <Kicker>Accounting Red Flags (Ch.2.10)</Kicker>
-          <div className="news-tags">
-            <Badge color={fi.redFlags.riskLevel === "HIGH" ? "red" : fi.redFlags.riskLevel === "MEDIUM" ? "amber" : "green"}>
-              {fi.redFlags.riskLevel} risk — {fi.redFlags.count} flag(s)
-            </Badge>
-          </div>
-          {fi.redFlags.flags.length > 0 ? (
-            <ul className="signal-list" style={{marginTop:"0.5rem"}}>
-              {fi.redFlags.flags.map((f, i) => <li key={i}>{f}</li>)}
-            </ul>
-          ) : (
-            <p className="muted" style={{marginTop:"0.5rem"}}>No major accounting red flags from available data.</p>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════
-// INDIA INTELLIGENCE PANEL (Phase 5)
-// ═══════════════════════════════════════════════════════
-function IndiaIntelPanel({ focus, dashboard }) {
+  const opts  = focus?.optionsIntelligence;
+  const adv   = focus?.advancedTechnical;
+  const fi    = focus?.fundamentalIntelligence;
   const india = focus?.indiaIntelligence;
-  if (!focus && !dashboard) return <Empty text="Search for a stock or load the dashboard to see India-specific signals." />;
 
-  const events = india?.upcomingEvents || [];
-  const giftNifty = india?.giftNifty;
+  if (!focus) return (
+    <Empty text="Search for any NSE stock to activate Advanced Intelligence — options chain, technical indicators, fundamental frameworks, and India-specific signals." />
+  );
+
+  const domains = [
+    {
+      id: "options",
+      label: "Options",
+      icon: "◎",
+      value: opts ? (opts.directionalBias || "NEUTRAL") : "N/A",
+      sub: opts ? `PCR ${opts.pcr != null ? Number(opts.pcr).toFixed(2) : "--"}` : "Geo-restricted",
+      color: opts?.directionalBias === "BULLISH" ? "adv-c-green" : opts?.directionalBias === "BEARISH" ? "adv-c-red" : "adv-c-amber",
+    },
+    {
+      id: "technical",
+      label: "Technical",
+      icon: "∿",
+      value: adv ? (adv.supertrend?.direction || "--") : focus.technical?.score != null ? `Score ${Math.round(focus.technical.score)}` : "--",
+      sub: adv ? `ADX ${adv.adx?.adx != null ? Number(adv.adx.adx).toFixed(1) : "--"}` : "Base data only",
+      color: adv?.supertrend?.direction === "BULLISH" || (!adv && focus.technical?.score >= 60) ? "adv-c-green" : adv?.supertrend?.direction === "BEARISH" || (!adv && focus.technical?.score < 40) ? "adv-c-red" : "adv-c-amber",
+    },
+    {
+      id: "fundamentals",
+      label: "Fundamentals",
+      icon: "◈",
+      value: fi ? (fi.fundamentalQuality || "--") : focus.fundamentals?.score != null ? `Score ${Math.round(focus.fundamentals.score)}` : "--",
+      sub: fi ? `QGLP ${fi.qglp?.totalScore || "--"} / 100` : "Base data only",
+      color: fi?.fundamentalQuality === "HIGH" || (!fi && focus.fundamentals?.score >= 60) ? "adv-c-green" : fi?.fundamentalQuality === "LOW" || (!fi && focus.fundamentals?.score < 40) ? "adv-c-red" : "adv-c-amber",
+    },
+    {
+      id: "india",
+      label: "India Intel",
+      icon: "⊕",
+      value: india?.giftNifty?.gapType ? fmtTag(india.giftNifty.gapType) : india ? "Loaded" : "No stock",
+      sub: india ? `${(india.signals || []).length} active signal(s)` : "Search a stock",
+      color: india?.giftNifty?.gapType?.includes("UP") ? "adv-c-green" : india?.giftNifty?.gapType?.includes("DOWN") ? "adv-c-red" : "adv-c-amber",
+    },
+  ];
+
+  /* colour helpers */
+  const pcrColor     = opts?.pcrSignal?.includes("BULLISH") ? "green" : opts?.pcrSignal?.includes("BEARISH") ? "red" : "amber";
+  const biasColor    = opts?.directionalBias === "BULLISH" ? "green" : opts?.directionalBias === "BEARISH" ? "red" : "amber";
+  const vixColor     = opts?.vixSignal === "EXTREME_FEAR" || opts?.vixSignal === "HIGH_FEAR" ? "red" : opts?.vixSignal === "CALM" || opts?.vixSignal === "EXTREME_COMPLACENCY" ? "green" : "amber";
+  const stColor      = adv?.supertrend?.direction === "BULLISH" ? "green" : "red";
+  const adxColor     = adv?.adx?.trendStrength === "STRONG_TREND" || adv?.adx?.trendStrength === "TREND" ? "green" : adv?.adx?.trendStrength === "RANGING" ? "red" : "amber";
+  const wyckoffColor = adv?.wyckoff?.bias === "BULLISH" ? "green" : adv?.wyckoff?.bias === "BEARISH" ? "red" : "amber";
+  const ewColor      = adv?.elliottWave?.wavePosition?.includes("BULLISH") ? "green" : adv?.elliottWave?.wavePosition?.includes("BEARISH") ? "red" : "amber";
+  const qglpColor    = fi?.qglp?.totalScore >= 70 ? "green" : fi?.qglp?.totalScore >= 50 ? "amber" : "red";
+  const ccColor      = fi?.coffeeCan?.metCount >= 4 ? "green" : fi?.coffeeCan?.metCount >= 3 ? "amber" : "red";
+  const moatColor    = fi?.moat?.moatWidth === "WIDE" ? "green" : fi?.moat?.moatWidth === "NARROW" ? "amber" : "red";
+  const qualityColor = fi?.fundamentalQuality === "HIGH" ? "green" : fi?.fundamentalQuality === "MEDIUM" ? "amber" : "red";
+  const impactColor  = (imp) => imp === "EXTREME" ? "red" : imp === "HIGH" ? "amber" : "green";
+  const events       = india?.upcomingEvents || [];
+  const giftNifty    = india?.giftNifty;
   const resultsSeason = india?.resultsSeason;
   const sectorRotation = india?.sectorRotation || [];
-  const indiaSignals = india?.signals || [];
-
-  const impactColor = (impact) => impact === "EXTREME" ? "red" : impact === "HIGH" ? "amber" : "green";
+  const indiaSignals   = india?.signals || [];
 
   return (
-    <div className="lt-wrap">
-      <Kicker>India Market Intelligence — Phase 5</Kicker>
-      <p className="muted" style={{marginBottom:"1rem"}}>India-specific signals: GIFT NIFTY pre-market, event calendar, sector rotation, F&O expiry, results season — from Ch.1, Ch.10, Ch.17.</p>
+    <div className="adv-panel">
 
-      {/* India Signals Summary */}
-      {indiaSignals.length > 0 && (
-        <div className="quality-note" style={{marginBottom:"1rem"}}>
-          <strong>Active India Signals ({indiaSignals.length})</strong>
-          <ul className="signal-list">
-            {indiaSignals.map((s, i) => <li key={i}>{s}</li>)}
-          </ul>
-          {india?.delta !== 0 && (
-            <p className="muted">Score delta from India signals: {india.delta > 0 ? "+" : ""}{india.delta} points</p>
+      {/* ── Domain strip (navigation) ── */}
+      <div className="adv-domain-strip">
+        {domains.map((d) => (
+          <button
+            key={d.id}
+            type="button"
+            className={`adv-domain-card${section === d.id ? " adv-domain-active" : ""}`}
+            onClick={() => setSection(d.id)}
+          >
+            <div className="adv-domain-icon">{d.icon}</div>
+            <span className="adv-domain-label">{d.label}</span>
+            <span className={`adv-domain-value ${d.color}`}>{d.value}</span>
+            <span className="adv-domain-sub">{d.sub}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* ══ OPTIONS ══ */}
+      {section === "options" && (
+        <div className="adv-body">
+          {!opts ? (
+            <div className="adv-unavail">
+              <div className="adv-unavail-title">⚠ Options chain unavailable</div>
+              <p>NSE options chain (PCR, max pain, OI walls, India VIX) is geo-restricted from Netlify cloud. Connect via Upstox or run locally to activate full options intelligence.</p>
+            </div>
+          ) : (
+            <div className="lt-wrap">
+              <div className="lt-head">
+                <div>
+                  <Kicker>Options Intelligence — Phase 4</Kicker>
+                  <div className={`lt-stance lt-${biasColor}`}>{opts.directionalBias || "NEUTRAL"}</div>
+                </div>
+                <div className={`lt-score score-${pcrColor}`}>
+                  <span>PCR</span>
+                  <strong>{opts.pcr != null ? Number(opts.pcr).toFixed(2) : "--"}</strong>
+                  <span>{fmtTag(opts.pcrSignal || "Unknown")}</span>
+                </div>
+              </div>
+              {opts.optionsChainAvailable === false && (
+                <div className="quality-note" style={{borderColor:"var(--amber)", marginBottom:"0.75rem"}}>
+                  <strong>⚠ Options chain unavailable from cloud</strong>
+                  <p>NSE options chain API is geo-restricted from Netlify cloud servers. India VIX is shown below via Yahoo Finance. For full chain data (PCR, max pain, OI walls) connect via Upstox or run locally.</p>
+                </div>
+              )}
+              {opts.optionsChainAvailable !== false && <p className="muted">{opts.summary || "Options chain analysis active."}</p>}
+              {opts.vix != null && (
+                <div className="quality-note" style={{borderColor: opts.vixSignal?.includes("FEAR") ? "var(--red)" : "var(--green)"}}>
+                  <strong>India VIX: {Number(opts.vix).toFixed(1)}</strong>
+                  <p>Signal: {fmtTag(opts.vixSignal || "Unknown")} — {opts.vixSignal === "EXTREME_FEAR" ? "Market panic — options premium very high. Sell premium." : opts.vixSignal === "CALM" ? "Low volatility — buy options cheaply. Pre-event straddles." : "VIX in normal zone."}</p>
+                </div>
+              )}
+              <div className="verdict-stats">
+                <StatBox label="PCR" value={opts.pcr != null ? Number(opts.pcr).toFixed(2) : "--"} sub={fmtTag(opts.pcrSignal || "")} color={pcrColor} />
+                <StatBox label="Max Pain" value={opts.maxPainStrike || "--"} sub={opts.maxPainDistance != null ? `${opts.maxPainDistance > 0 ? "+" : ""}${Number(opts.maxPainDistance).toFixed(1)}% from spot` : "distance"} />
+                <StatBox label="Put Wall" value={opts.supportLevel || "--"} sub="OI support zone" color="green" />
+                <StatBox label="Call Wall" value={opts.resistanceLevel || "--"} sub="OI resistance zone" color="red" />
+                <StatBox label="India VIX" value={opts.vix != null ? Number(opts.vix).toFixed(1) : "--"} sub={fmtTag(opts.vixSignal || "")} color={vixColor} />
+                <StatBox label="Expiry" value={opts.expiry || "--"} sub="nearest expiry" />
+              </div>
+              <div className="split-grid">
+                <div className="split-card">
+                  <Kicker>Call OI Walls — Resistance</Kicker>
+                  <ul className="signal-list">
+                    {(opts.oiWalls?.call || []).slice(0, 5).map((w) => (
+                      <li key={w.strike}>Strike {w.strike} — OI {(w.oi / 100).toFixed(0)}L contracts</li>
+                    ))}
+                    {!(opts.oiWalls?.call?.length) && <li>No significant call walls detected</li>}
+                  </ul>
+                </div>
+                <div className="split-card">
+                  <Kicker>Put OI Walls — Support</Kicker>
+                  <ul className="signal-list">
+                    {(opts.oiWalls?.put || []).slice(0, 5).map((w) => (
+                      <li key={w.strike}>Strike {w.strike} — OI {(w.oi / 100).toFixed(0)}L contracts</li>
+                    ))}
+                    {!(opts.oiWalls?.put?.length) && <li>No significant put walls detected</li>}
+                  </ul>
+                </div>
+              </div>
+              <div className="detail-card" style={{marginTop:"1rem"}}>
+                <Kicker>How to Use This Data</Kicker>
+                <ul className="signal-list">
+                  <li>PCR {opts.pcr > 1.2 ? "> 1.2 = Put writers outnumber call writers → Bullish bias" : opts.pcr < 0.8 ? "< 0.8 = Call writers outnumber put writers → Bearish bias" : "near 1.0 = Neutral market sentiment"}</li>
+                  <li>Max Pain {opts.maxPainStrike} = Strike where option writers lose least. Markets often gravitate here near expiry.</li>
+                  <li>Call Wall at {opts.resistanceLevel || "--"} = Heavy short positions by option writers — strong resistance.</li>
+                  <li>Put Wall at {opts.supportLevel || "--"} = Heavy short positions by put writers — strong support floor.</li>
+                </ul>
+              </div>
+            </div>
           )}
         </div>
       )}
 
-      {/* GIFT NIFTY */}
-      {giftNifty?.gapType && (
-        <div className="detail-card" style={{marginBottom:"0.75rem", borderLeft:`3px solid ${giftNifty.gapType === "GAP_UP" || giftNifty.gapType === "STRONG_GAP_UP" ? "var(--green)" : giftNifty.gapType === "GAP_DOWN" || giftNifty.gapType === "STRONG_GAP_DOWN" ? "var(--red)" : "var(--amber)"}`}}>
-          <Kicker>GIFT NIFTY Pre-Market Signal (Ch.1.4)</Kicker>
-          <div className="verdict-stats">
-            <StatBox label="Gap" value={giftNifty.gapPct != null ? `${giftNifty.gapPct > 0 ? "+" : ""}${Number(giftNifty.gapPct).toFixed(2)}%` : "--"} sub={fmtTag(giftNifty.gapType || "")} color={giftNifty.gapPct > 0 ? "green" : "red"} />
-            <StatBox label="Futures" value={giftNifty.currentFuturesPrice || "--"} sub="current" />
-            <StatBox label="Prev Close" value={giftNifty.prevNSEClose || "--"} sub="NSE close" />
-          </div>
-          <p className="muted">{giftNifty.interpretation}</p>
-        </div>
-      )}
-
-      {/* Results Season */}
-      {resultsSeason && (
-        <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-          <Kicker>Results Season Status (Ch.10)</Kicker>
-          <div className="news-tags">
-            <Badge color={resultsSeason.isInSeason ? "amber" : "green"}>{resultsSeason.isInSeason ? "ACTIVE" : "OFF-SEASON"}</Badge>
-            <Badge color={resultsSeason.ivExpansionRisk === "HIGH" ? "red" : "green"}>IV risk: {resultsSeason.ivExpansionRisk}</Badge>
-          </div>
-          <p className="muted" style={{marginTop:"0.5rem"}}>{resultsSeason.season}</p>
-          <p className="muted">{resultsSeason.tradingImplication}</p>
-        </div>
-      )}
-
-      {/* Upcoming Events */}
-      {events.length > 0 && (
-        <div className="detail-card" style={{marginBottom:"0.75rem"}}>
-          <Kicker>Upcoming Market Events (Ch.10, Ch.17)</Kicker>
-          {events.slice(0, 4).map((e, i) => (
-            <div key={i} style={{marginBottom:"0.75rem", paddingBottom:"0.75rem", borderBottom: i < events.length - 1 ? "1px solid var(--border)" : "none"}}>
-              <div className="news-tags">
-                <Badge color={impactColor(e.impact)}>{e.impact} IMPACT</Badge>
-                <Badge>{fmtTag(e.type || "")}</Badge>
-                {e.daysAway != null && <Badge>{e.daysAway} day(s) away</Badge>}
+      {/* ══ TECHNICAL ══ */}
+      {section === "technical" && (
+        <div className="adv-body">
+          {!adv ? (
+            <div className="lt-wrap">
+              <div className="quality-note" style={{borderColor:"var(--amber)"}}>
+                <strong>Advanced indicators unavailable</strong>
+                <p>ADX, Supertrend, Wyckoff, and Elliott Wave require ≥20 days of candle history. Showing base technical data below.</p>
               </div>
-              <strong style={{display:"block", marginTop:"0.25rem"}}>{e.name}</strong>
-              <p className="muted">{e.description}</p>
-              {e.tradingNote && <p className="muted" style={{fontStyle:"italic"}}>{e.tradingNote}</p>}
+              {focus.technical && (
+                <div className="verdict-stats" style={{marginTop:"1rem"}}>
+                  <StatBox label="RSI (14)" value={focus.technical.rsi14 != null ? Number(focus.technical.rsi14).toFixed(1) : "--"} sub={focus.technical.rsi14 > 70 ? "Overbought" : focus.technical.rsi14 < 30 ? "Oversold" : "Neutral"} color={focus.technical.rsi14 > 70 ? "red" : focus.technical.rsi14 < 30 ? "green" : "amber"} />
+                  <StatBox label="20d Return" value={focus.technical.return20d != null ? `${focus.technical.return20d > 0 ? "+" : ""}${Number(focus.technical.return20d).toFixed(1)}%` : "--"} color={focus.technical.return20d > 0 ? "green" : "red"} />
+                  <StatBox label="60d Return" value={focus.technical.return60d != null ? `${focus.technical.return60d > 0 ? "+" : ""}${Number(focus.technical.return60d).toFixed(1)}%` : "--"} color={focus.technical.return60d > 0 ? "green" : "red"} />
+                  <StatBox label="Vol Surge" value={focus.technical.volumeSurge != null ? `${Number(focus.technical.volumeSurge).toFixed(2)}x` : "--"} color={focus.technical.volumeSurge > 1.5 ? "green" : "amber"} />
+                  <StatBox label="Tech Score" value={focus.technical.score != null ? Number(focus.technical.score).toFixed(0) : "--"} sub="/ 100" color={focus.technical.score >= 60 ? "green" : focus.technical.score >= 40 ? "amber" : "red"} />
+                </div>
+              )}
             </div>
-          ))}
-        </div>
-      )}
-
-      {/* Sector Rotation */}
-      {sectorRotation.length > 0 && (
-        <div className="detail-card">
-          <Kicker>Sector Rotation Signals (Ch.17)</Kicker>
-          {sectorRotation.map((s, i) => (
-            <div key={i} style={{marginBottom:"0.5rem"}}>
-              <div className="news-tags">
-                <Badge color={s.signal === "BULLISH" || s.signal === "SEASONAL_BULLISH" ? "green" : "red"}>{s.sector}</Badge>
-                <Badge color={s.signal?.includes("BULLISH") ? "green" : "red"}>{fmtTag(s.signal || "")}</Badge>
+          ) : (
+            <div className="lt-wrap">
+              <div className="lt-head">
+                <div>
+                  <Kicker>Advanced Technical Analysis — Phase 2</Kicker>
+                  <div className={`lt-stance lt-${stColor}`}>
+                    Supertrend: {adv.supertrend?.direction || "--"}
+                    {adv.supertrend?.justFlipped ? " ★ JUST FLIPPED" : ""}
+                  </div>
+                </div>
+                <div className={`lt-score score-${adxColor}`}>
+                  <span>ADX</span>
+                  <strong>{adv.adx?.adx != null ? Number(adv.adx.adx).toFixed(1) : "--"}</strong>
+                  <span>{fmtTag(adv.adx?.trendStrength || "")}</span>
+                </div>
               </div>
-              <p className="muted" style={{marginTop:"0.25rem"}}>{s.reason}</p>
+              <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                <Kicker>ADX — Trend Strength (Ch.5.3)</Kicker>
+                <div className="verdict-stats">
+                  <StatBox label="ADX" value={adv.adx?.adx != null ? Number(adv.adx.adx).toFixed(1) : "--"} sub={fmtTag(adv.adx?.trendStrength || "")} color={adxColor} />
+                  <StatBox label="DI+" value={adv.adx?.diPlus != null ? Number(adv.adx.diPlus).toFixed(1) : "--"} sub="bullish force" color="green" />
+                  <StatBox label="DI-" value={adv.adx?.diMinus != null ? Number(adv.adx.diMinus).toFixed(1) : "--"} sub="bearish force" color="red" />
+                </div>
+                <p className="muted">
+                  {adv.adx?.trendStrength === "RANGING" ? "ADX < 20: Market is range-bound. Avoid breakout trades. Mean-reversion preferred." :
+                   adv.adx?.trendStrength === "STRONG_TREND" ? "ADX > 40: Very strong trend. Ride it — do not fade." :
+                   adv.adx?.signal === "UPTREND_CONFIRMED" ? "ADX confirms uptrend with DI+ dominant. Trend-following longs valid." :
+                   adv.adx?.signal === "DOWNTREND_CONFIRMED" ? "ADX confirms downtrend with DI- dominant. Trend-following shorts valid." : "Weak trend — trade with caution."}
+                </p>
+              </div>
+              <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                <Kicker>Supertrend — India Favourite (Ch.5.3)</Kicker>
+                <div className="coverage-list">
+                  <span>Direction {adv.supertrend?.direction || "--"}</span>
+                  <span>Level {adv.supertrend?.value != null ? Number(adv.supertrend.value).toFixed(1) : "--"}</span>
+                  <span>Price vs ST {adv.supertrend?.priceVsSupertrend || "--"}</span>
+                  <span>Signal {fmtTag(adv.supertrend?.signal || "")}</span>
+                </div>
+                {adv.supertrend?.justFlipped && (
+                  <div className="quality-note" style={{borderColor: adv.supertrend.direction === "BULLISH" ? "var(--green)" : "var(--red)"}}>
+                    <strong>Supertrend just flipped {adv.supertrend.direction}</strong>
+                    <p>Direction change — one of the highest-quality reversal signals in Indian markets.</p>
+                  </div>
+                )}
+              </div>
+              <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                <Kicker>Wyckoff Phase (Ch.12)</Kicker>
+                <div className={`lt-stance lt-${wyckoffColor}`} style={{fontSize:"14px", marginBottom:"0.5rem"}}>
+                  {["UNCLEAR","UNKNOWN","UNDEFINED"].includes(adv.wyckoff?.phase) ? "Phase Unclear" : fmtTag(adv.wyckoff?.phase || "Unknown")}
+                </div>
+                <div className="coverage-list">
+                  <span>Event {adv.wyckoff?.event ? fmtTag(adv.wyckoff.event) : "—"}</span>
+                  <span>Volume {fmtTag(adv.wyckoff?.volumeTrend || "--")}</span>
+                  <span>20d price {adv.wyckoff?.priceTrend20d != null ? `${Number(adv.wyckoff.priceTrend20d) > 0 ? "+" : ""}${Number(adv.wyckoff.priceTrend20d).toFixed(1)}%` : "--"}</span>
+                  <span>Confidence {adv.wyckoff?.confidence ?? "--"}%</span>
+                </div>
+                <p className="muted">{adv.wyckoff?.interpretation || "Wyckoff phase unclear — needs more candle history."}</p>
+              </div>
+              <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                <Kicker>Elliott Wave (Ch.12)</Kicker>
+                <div className={`lt-stance lt-${ewColor}`} style={{fontSize:"13px", marginBottom:"0.5rem"}}>
+                  {["UNCLEAR","UNKNOWN","INSUFFICIENT_PIVOTS"].includes(adv.elliottWave?.wavePosition) ? "Structure Unclear" : fmtTag(adv.elliottWave?.wavePosition || "Unclear")}
+                </div>
+                <div className="coverage-list">
+                  <span>Confidence {adv.elliottWave?.confidence ?? 0}%</span>
+                  <span>W3/W1 ratio {adv.elliottWave?.fibRatios?.wave3to1 != null ? Number(adv.elliottWave.fibRatios.wave3to1).toFixed(2) : "--"}</span>
+                  {adv.elliottWave?.projection?.wave5Target && <span>W5 target ~{Number(adv.elliottWave.projection.wave5Target).toFixed(1)}</span>}
+                </div>
+                <p className="muted">{adv.elliottWave?.interpretation || "Insufficient pivot data for wave labelling."}</p>
+              </div>
+              {adv.chartPatterns?.patterns?.length > 0 && (
+                <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                  <Kicker>Chart Patterns (Ch.6)</Kicker>
+                  {adv.chartPatterns.patterns.map((p) => (
+                    <div key={p.pattern} style={{marginBottom:"0.75rem"}}>
+                      <div className="news-tags">
+                        <Badge color={p.bias === "BULLISH" ? "green" : p.bias === "BEARISH" ? "red" : "amber"}>{fmtTag(p.pattern)}</Badge>
+                        <Badge color={p.bias === "BULLISH" ? "green" : "red"}>{p.bias}</Badge>
+                        <Badge>{p.confidence}% confidence</Badge>
+                      </div>
+                      <p className="muted" style={{marginTop:"0.25rem"}}>{p.description}</p>
+                      {p.target && <p className="muted">Target: ₹{Number(p.target).toFixed(1)}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {adv.volumeProfile?.poc && (
+                <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                  <Kicker>Volume Profile — POC (Ch.3, Ch.14)</Kicker>
+                  <div className="coverage-list">
+                    <span>Point of Control ₹{Number(adv.volumeProfile.poc).toFixed(1)}</span>
+                    <span>Signal {fmtTag(adv.volumeProfile.signal || "--")}</span>
+                    <span>HVN zones {adv.volumeProfile.hvn?.length || 0}</span>
+                    <span>LVN zones {adv.volumeProfile.lvn?.length || 0}</span>
+                  </div>
+                  <p className="muted">POC = highest-volume price. Acts as magnet. LVN zones = fast-move areas.</p>
+                </div>
+              )}
+              {adv.signals?.length > 0 && (
+                <div className="detail-card">
+                  <Kicker>All Advanced Signals</Kicker>
+                  <ul className="signal-list">
+                    {adv.signals.map((s, i) => (
+                      <li key={i}><strong>{s.indicator}</strong>: {s.signal}{s.value != null ? ` (${Number(s.value).toFixed(1)})` : ""}</li>
+                    ))}
+                  </ul>
+                  <p className="muted">Net technical delta: {adv.delta > 0 ? "+" : ""}{adv.delta}</p>
+                </div>
+              )}
             </div>
-          ))}
+          )}
         </div>
       )}
 
-      {!india && (
-        <div className="quality-note">
-          <strong>India Intelligence requires stock search</strong>
-          <p>Search for any NSE stock to get GIFT NIFTY signal, event calendar, sector rotation, results season status, and India-specific score adjustments.</p>
+      {/* ══ FUNDAMENTALS ══ */}
+      {section === "fundamentals" && (
+        <div className="adv-body">
+          {!fi ? (
+            <div className="lt-wrap">
+              <div className="quality-note" style={{borderColor:"var(--amber)"}}>
+                <strong>Framework scoring unavailable</strong>
+                <p>QGLP, Coffee Can, Moat, and Lynch scoring requires detailed data from Screener/Moneycontrol. Showing available fundamental metrics below.</p>
+              </div>
+              {focus.fundamentals && (
+                <div className="verdict-stats" style={{marginTop:"1rem"}}>
+                  <StatBox label="ROE" value={focus.fundamentals.roe != null ? `${Number(focus.fundamentals.roe).toFixed(1)}%` : "--"} sub="Return on Equity" color={focus.fundamentals.roe >= 20 ? "green" : focus.fundamentals.roe >= 15 ? "amber" : "red"} />
+                  <StatBox label="ROCE" value={focus.fundamentals.roce != null ? `${Number(focus.fundamentals.roce).toFixed(1)}%` : "--"} sub="Return on Capital" color={focus.fundamentals.roce >= 18 ? "green" : "amber"} />
+                  <StatBox label="P/E" value={focus.fundamentals.pe != null ? Number(focus.fundamentals.pe).toFixed(1) : "--"} sub="Price / Earnings" />
+                  <StatBox label="Rev Growth" value={focus.fundamentals.salesGrowth3yr != null ? `${Number(focus.fundamentals.salesGrowth3yr).toFixed(1)}%` : "--"} sub="3yr Revenue" color={focus.fundamentals.salesGrowth3yr >= 12 ? "green" : "amber"} />
+                  <StatBox label="Profit Growth" value={focus.fundamentals.profitGrowth3yr != null ? `${Number(focus.fundamentals.profitGrowth3yr).toFixed(1)}%` : "--"} sub="3yr PAT" color={focus.fundamentals.profitGrowth3yr >= 15 ? "green" : "amber"} />
+                  <StatBox label="Fund Score" value={focus.fundamentals.score != null ? Number(focus.fundamentals.score).toFixed(0) : "--"} sub="/ 100" color={focus.fundamentals.score >= 60 ? "green" : focus.fundamentals.score >= 40 ? "amber" : "red"} />
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="lt-wrap">
+              <div className="lt-head">
+                <div>
+                  <Kicker>Fundamental Frameworks — Phase 3</Kicker>
+                  <div className={`lt-stance lt-${qualityColor}`}>Fundamental Quality: {fi.fundamentalQuality || "--"}</div>
+                </div>
+                <div className={`lt-score score-${qglpColor}`}>
+                  <span>QGLP</span>
+                  <strong>{fi.qglp?.totalScore || "--"}</strong>
+                  <span>/ 100</span>
+                </div>
+              </div>
+              {fi.topSignals?.length > 0 && (
+                <div className="quality-note">
+                  <strong>Key Signals</strong>
+                  <ul className="signal-list">{fi.topSignals.map((s, i) => <li key={i}>{s}</li>)}</ul>
+                </div>
+              )}
+              <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                <Kicker>QGLP — Raamdeo Agrawal (Ch.2.9)</Kicker>
+                <div className="verdict-stats">
+                  <StatBox label="Quality" value={fi.qglp?.scores?.quality || "--"} sub="ROE+ROCE+D/E" color={fi.qglp?.scores?.quality >= 60 ? "green" : "amber"} />
+                  <StatBox label="Growth" value={fi.qglp?.scores?.growth || "--"} sub="rev+profit growth" color={fi.qglp?.scores?.growth >= 60 ? "green" : "amber"} />
+                  <StatBox label="Longevity" value={fi.qglp?.scores?.longevity || "--"} sub="durability" color={fi.qglp?.scores?.longevity >= 60 ? "green" : "amber"} />
+                  <StatBox label="Price" value={fi.qglp?.scores?.price || "--"} sub={`PEG ${fi.qglp?.peg != null ? Number(fi.qglp.peg).toFixed(2) : "--"}`} color={fi.qglp?.peg < 1.5 ? "green" : "red"} />
+                </div>
+                <div className="news-tags" style={{marginTop:"0.5rem"}}>
+                  <Badge color={qglpColor}>{fi.qglp?.verdict ? fmtTag(fi.qglp.verdict) : "--"}</Badge>
+                </div>
+                <ul className="signal-list" style={{marginTop:"0.5rem"}}>
+                  {(fi.qglp?.signals || []).slice(0, 3).map((s, i) => <li key={i}>{s}</li>)}
+                </ul>
+              </div>
+              <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                <Kicker>Coffee Can — Saurabh Mukherjea (Ch.2.7)</Kicker>
+                <div className={`lt-stance lt-${ccColor}`} style={{fontSize:"13px", marginBottom:"0.5rem"}}>
+                  {fi.coffeeCan?.verdict ? fmtTag(fi.coffeeCan.verdict) : "--"} ({fi.coffeeCan?.metCount || 0}/5 criteria)
+                </div>
+                <ul className="signal-list">
+                  {(fi.coffeeCan?.signals || []).map((s, i) => <li key={i}>{s}</li>)}
+                </ul>
+                <p className="muted" style={{marginTop:"0.5rem"}}>{fi.coffeeCan?.interpretation}</p>
+              </div>
+              <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                <Kicker>Economic Moat — Warren Buffett (Ch.2.5)</Kicker>
+                <div className="verdict-stats">
+                  <StatBox label="Moat Width" value={fi.moat?.moatWidth || "--"} sub={fmtTag(fi.moat?.moatType || "none")} color={moatColor} />
+                  <StatBox label="Moat Score" value={fi.moat?.moatScore || "--"} sub="/ 100" color={moatColor} />
+                </div>
+                <ul className="signal-list" style={{marginTop:"0.5rem"}}>
+                  {(fi.moat?.moatSignals || []).slice(0, 3).map((s, i) => <li key={i}>{s}</li>)}
+                </ul>
+                <p className="muted">{fi.moat?.interpretation}</p>
+              </div>
+              <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                <Kicker>Peter Lynch Category (Ch.2.4)</Kicker>
+                <div className="news-tags">
+                  <Badge color="amber">{fmtTag(fi.lynch?.category || "--")}</Badge>
+                  {fi.lynch?.avgGrowth != null && <Badge>{Number(fi.lynch.avgGrowth).toFixed(1)}% avg growth</Badge>}
+                </div>
+                <p className="muted" style={{marginTop:"0.5rem"}}>{fi.lynch?.strategy}</p>
+                <p className="muted">{fi.lynch?.signal}</p>
+              </div>
+              {fi.redFlags && (
+                <div className="detail-card" style={{borderLeft: fi.redFlags.riskLevel === "HIGH" ? "3px solid var(--red)" : fi.redFlags.riskLevel === "MEDIUM" ? "3px solid var(--amber)" : "3px solid var(--green)"}}>
+                  <Kicker>Accounting Red Flags (Ch.2.10)</Kicker>
+                  <div className="news-tags">
+                    <Badge color={fi.redFlags.riskLevel === "HIGH" ? "red" : fi.redFlags.riskLevel === "MEDIUM" ? "amber" : "green"}>
+                      {fi.redFlags.riskLevel} risk — {fi.redFlags.count} flag(s)
+                    </Badge>
+                  </div>
+                  {fi.redFlags.flags.length > 0 ? (
+                    <ul className="signal-list" style={{marginTop:"0.5rem"}}>
+                      {fi.redFlags.flags.map((f, i) => <li key={i}>{f}</li>)}
+                    </ul>
+                  ) : (
+                    <p className="muted" style={{marginTop:"0.5rem"}}>No major accounting red flags from available data.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ══ INDIA INTEL ══ */}
+      {section === "india" && (
+        <div className="adv-body">
+          <div className="lt-wrap">
+            <Kicker>India Market Intelligence — Phase 5</Kicker>
+            <p className="muted" style={{marginBottom:"1rem"}}>India-specific signals: GIFT NIFTY pre-market, event calendar, sector rotation, F&O expiry, results season — from Ch.1, Ch.10, Ch.17.</p>
+            {indiaSignals.length > 0 && (
+              <div className="quality-note" style={{marginBottom:"1rem"}}>
+                <strong>Active India Signals ({indiaSignals.length})</strong>
+                <ul className="signal-list">
+                  {indiaSignals.map((s, i) => <li key={i}>{s}</li>)}
+                </ul>
+                {india?.delta !== 0 && (
+                  <p className="muted">Score delta from India signals: {india.delta > 0 ? "+" : ""}{india.delta} points</p>
+                )}
+              </div>
+            )}
+            {giftNifty?.gapType && (
+              <div className="detail-card" style={{marginBottom:"0.75rem", borderLeft:`3px solid ${giftNifty.gapType.includes("UP") ? "var(--green)" : giftNifty.gapType.includes("DOWN") ? "var(--red)" : "var(--amber)"}`}}>
+                <Kicker>GIFT NIFTY Pre-Market Signal (Ch.1.4)</Kicker>
+                <div className="verdict-stats">
+                  <StatBox label="Gap" value={giftNifty.gapPct != null ? `${giftNifty.gapPct > 0 ? "+" : ""}${Number(giftNifty.gapPct).toFixed(2)}%` : "--"} sub={fmtTag(giftNifty.gapType || "")} color={giftNifty.gapPct > 0 ? "green" : "red"} />
+                  <StatBox label="Futures" value={giftNifty.currentFuturesPrice || "--"} sub="current" />
+                  <StatBox label="Prev Close" value={giftNifty.prevNSEClose || "--"} sub="NSE close" />
+                </div>
+                <p className="muted">{giftNifty.interpretation}</p>
+              </div>
+            )}
+            {resultsSeason && (
+              <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                <Kicker>Results Season Status (Ch.10)</Kicker>
+                <div className="news-tags">
+                  <Badge color={resultsSeason.isInSeason ? "amber" : "green"}>{resultsSeason.isInSeason ? "ACTIVE" : "OFF-SEASON"}</Badge>
+                  <Badge color={resultsSeason.ivExpansionRisk === "HIGH" ? "red" : "green"}>IV risk: {resultsSeason.ivExpansionRisk}</Badge>
+                </div>
+                <p className="muted" style={{marginTop:"0.5rem"}}>{resultsSeason.season}</p>
+                <p className="muted">{resultsSeason.tradingImplication}</p>
+              </div>
+            )}
+            {events.length > 0 && (
+              <div className="detail-card" style={{marginBottom:"0.75rem"}}>
+                <Kicker>Upcoming Market Events (Ch.10, Ch.17)</Kicker>
+                {events.slice(0, 4).map((e, i) => (
+                  <div key={i} style={{marginBottom:"0.75rem", paddingBottom:"0.75rem", borderBottom: i < events.length - 1 ? "1px solid var(--border)" : "none"}}>
+                    <div className="news-tags">
+                      <Badge color={impactColor(e.impact)}>{e.impact} IMPACT</Badge>
+                      <Badge>{fmtTag(e.type || "")}</Badge>
+                      {e.daysAway != null && <Badge>{e.daysAway} day(s) away</Badge>}
+                    </div>
+                    <strong style={{display:"block", marginTop:"0.25rem"}}>{e.name}</strong>
+                    <p className="muted">{e.description}</p>
+                    {e.tradingNote && <p className="muted" style={{fontStyle:"italic"}}>{e.tradingNote}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {sectorRotation.length > 0 && (
+              <div className="detail-card">
+                <Kicker>Sector Rotation Signals (Ch.17)</Kicker>
+                {sectorRotation.map((s, i) => (
+                  <div key={i} style={{marginBottom:"0.5rem"}}>
+                    <div className="news-tags">
+                      <Badge color={s.signal === "BULLISH" || s.signal === "SEASONAL_BULLISH" ? "green" : "red"}>{s.sector}</Badge>
+                      <Badge color={s.signal?.includes("BULLISH") ? "green" : "red"}>{fmtTag(s.signal || "")}</Badge>
+                    </div>
+                    <p className="muted" style={{marginTop:"0.25rem"}}>{s.reason}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            {!india && (
+              <div className="quality-note">
+                <strong>India Intelligence requires stock search</strong>
+                <p>Search for any NSE stock to get GIFT NIFTY signal, event calendar, sector rotation, results season status, and India-specific score adjustments.</p>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
   );
 }
+
 
 function Sidebar({ dashboard, onFocus, activeTab, setActiveTab }) {
   const regime = dashboard?.marketContext?.regime || "--";
   const riskOn = dashboard?.marketContext?.riskOnScore;
-  const tabs = ["Verdict", "AI Report", "Evidence", "Options", "Adv. Technical", "Frameworks", "India Intel", "Long Term", "Market", "News", "Signal Radar"];
+  const tabs = ["Verdict", "AI Report", "Evidence", "Advanced", "Long Term", "Market", "News", "Signal Radar"];
 
   return (
     <aside className="sidebar">
@@ -2372,7 +2406,7 @@ function Sidebar({ dashboard, onFocus, activeTab, setActiveTab }) {
       </div>
       <nav className="sidebar-nav">
         {tabs.map((tab) => {
-          const isNew = ["AI Report", "Options", "Adv. Technical", "Frameworks", "India Intel"].includes(tab);
+          const isNew = ["AI Report", "Advanced"].includes(tab);
           return (
             <button key={tab} className={`nav-item ${activeTab === tab ? "nav-active" : ""}`} type="button" onClick={() => setActiveTab(tab)}>
               {tab}
@@ -2651,67 +2685,6 @@ export default function App() {
         />
 
         <div className="main-scroll">
-          <section className="search-section">
-            <div className="search-shell">
-              <div className="search-hero-row">
-                <div className="search-copy">
-                  <Kicker>Ask Superbrain</Kicker>
-                  <h1>AI research cockpit for Indian equities.</h1>
-                </div>
-                <SearchVisualPanel dashboard={dashboard} focus={focus} />
-              </div>
-              <SearchBar onSubmitRef={onSubmitRef} loading={askLoading} recentAsks={recentAsks} />
-              <div className="quick-chips">
-                {quickSymbols.map((symbol) => (
-                  <button key={symbol} className="quick-chip" type="button" onClick={() => focusSymbol(symbol)}>
-                    {symbol}
-                  </button>
-                ))}
-              </div>
-              {recentAsks.length ? (
-                <div className="recent-row">
-                  <span className="muted">Recent</span>
-                  {recentAsks.slice(0, 5).map((item) => (
-                    <button
-                      key={item.at}
-                      className="recent-chip"
-                      type="button"
-                      onClick={() => {
-                        if (SearchBar._setTextRef) {
-                          SearchBar._setTextRef(item.query);
-                        }
-                        runAsk(item.query);
-                      }}
-                    >
-                      {item.symbol || item.query.slice(0, 20)}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </section>
-
-          <section className="hero-grid">
-            <div className="hero-card hero-card-summary">
-              <div className="hero-card-head">
-                <div>
-                  <Kicker>Decision Overview</Kicker>
-                  <h2>{focus?.symbol || "Market overview"}</h2>
-                </div>
-                {focus?.verdict ? <Pill color={verdictColor(focus.verdict)}>{fmtVerdict(focus.verdict)}</Pill> : <Badge>Research live</Badge>}
-              </div>
-              <p className="hero-muted">
-                {answer || focus?.recommendation?.summary || "Use the tabs below to move from headline verdict to evidence, long-term context, market regime, and signal scans."}
-              </p>
-              <div className="hero-stats">
-                <StatBox label="Average confidence" value={fmt(dashboard?.summary?.avgConfidence, "%", 0)} sub="across coverage" />
-                <StatBox label="Buy setups" value={dashboard?.summary?.buySignals || 0} sub="current dashboard" color="green" />
-                <StatBox label="Sell setups" value={dashboard?.summary?.sellSignals || 0} sub="current dashboard" color="red" />
-              </div>
-            </div>
-            <MarketGraphic dashboard={dashboard} focus={focus} />
-            <ResearchQualityCard focus={focus} dashboard={dashboard} />
-          </section>
 
           {error ? (
             <div className="error-bar" role="alert">
@@ -2779,6 +2752,45 @@ export default function App() {
           <div className="tab-content">
             {activeTab === "Verdict" ? (
               <>
+                <section className="search-section">
+                  <div className="search-shell">
+                    <div className="search-hero-row">
+                      <div className="search-copy">
+                        <Kicker>Ask Superbrain</Kicker>
+                        <h1>AI research cockpit for Indian equities.</h1>
+                      </div>
+                      <SearchVisualPanel dashboard={dashboard} focus={focus} />
+                    </div>
+                    <SearchBar onSubmitRef={onSubmitRef} loading={askLoading} recentAsks={recentAsks} />
+                    <div className="quick-chips">
+                      {quickSymbols.map((symbol) => (
+                        <button key={symbol} className="quick-chip" type="button" onClick={() => focusSymbol(symbol)}>
+                          {symbol}
+                        </button>
+                      ))}
+                    </div>
+                    {recentAsks.length ? (
+                      <div className="recent-row">
+                        <span className="muted">Recent</span>
+                        {recentAsks.slice(0, 5).map((item) => (
+                          <button
+                            key={item.at}
+                            className="recent-chip"
+                            type="button"
+                            onClick={() => {
+                              if (SearchBar._setTextRef) {
+                                SearchBar._setTextRef(item.query);
+                              }
+                              runAsk(item.query);
+                            }}
+                          >
+                            {item.symbol || item.query.slice(0, 20)}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
                 <section className="hero-grid">
                   <div className="hero-card hero-card-summary">
                     <div className="hero-card-head">
@@ -2791,6 +2803,11 @@ export default function App() {
                     <p className="hero-muted">
                       {answer || focus?.recommendation?.summary || "Search any Indian stock to see the full cross-strategy verdict and evidence stack."}
                     </p>
+                    <div className="hero-stats">
+                      <StatBox label="Average confidence" value={fmt(dashboard?.summary?.avgConfidence, "%", 0)} sub="across coverage" />
+                      <StatBox label="Buy setups" value={dashboard?.summary?.buySignals || 0} sub="current dashboard" color="green" />
+                      <StatBox label="Sell setups" value={dashboard?.summary?.sellSignals || 0} sub="current dashboard" color="red" />
+                    </div>
                   </div>
                   <MarketGraphic dashboard={dashboard} focus={focus} />
                   <ResearchQualityCard focus={focus} dashboard={dashboard} />
@@ -2800,10 +2817,7 @@ export default function App() {
             ) : null}
             {activeTab === "AI Report" ? <GodLevelReportPanel focus={focus} /> : null}
             {activeTab === "Evidence" ? <ReasonPanel focus={focus} answer={answer} allStrategies={allStrategies} strategyConsensus={strategyConsensus} strategySelection={strategySelection} /> : null}
-            {activeTab === "Options" ? <OptionsIntelPanel focus={focus} /> : null}
-            {activeTab === "Adv. Technical" ? <AdvTechnicalPanel focus={focus} /> : null}
-            {activeTab === "Frameworks" ? <FundamentalFrameworksPanel focus={focus} /> : null}
-            {activeTab === "India Intel" ? <IndiaIntelPanel focus={focus} dashboard={dashboard} /> : null}
+            {activeTab === "Advanced" ? <AdvancedIntelPanel focus={focus} dashboard={dashboard} /> : null}
             {activeTab === "Long Term" ? <LongTermPanel focus={focus} /> : null}
             {activeTab === "Market" ? <MarketPanel dashboard={dashboard} /> : null}
             {activeTab === "News" ? <NewsPanel focus={focus} dashboard={dashboard} /> : null}
