@@ -83,7 +83,7 @@ const NEGATIVE_WORDS = new Set([
 ]);
 
 const EVENT_RULES = [
-  { tag: "war", keywords: ["war", "missile", "drone strike", "conflict", "military", "attack", "ceasefire"], geopolitical: true, macro: true },
+  { tag: "war", keywords: ["war", "drone strike", "conflict", "military attack", "ceasefire", "airstrike", "bombardment"], geopolitical: true, macro: true },
   { tag: "oil_shock", keywords: ["opec", "brent", "crude", "oil price", "diesel", "petrol"], geopolitical: true, macro: true },
   { tag: "shipping_risk", keywords: ["red sea", "shipping", "freight", "shipping lane", "supply chain", "container"], geopolitical: true, macro: true },
   { tag: "sanctions", keywords: ["sanction", "embargo", "export curb", "tariff", "trade war"], geopolitical: true, macro: true },
@@ -97,7 +97,10 @@ const EVENT_RULES = [
   { tag: "monsoon", keywords: ["monsoon", "rainfall", "heatwave", "el nino"], macro: true },
   { tag: "cyber_risk", keywords: ["cyber", "ransomware", "data breach", "outage", "hack"], macro: true },
   { tag: "earnings", keywords: ["results", "earnings", "quarter", "guidance", "ebitda", "revenue"], company: true },
-  { tag: "order_win", keywords: ["order win", "wins order", "wins contract", "deal win", "large order", "bagged contract"], company: true },
+  { tag: "order_win", keywords: ["order win", "wins order", "wins contract", "deal win", "large order", "bagged contract",
+    "licence to manufacture", "license to manufacture", "defence licence", "defense license",
+    "defence order", "defense order", "defence contract", "defense contract",
+    "missile order", "arms order", "defence deal", "defense deal", "awarded contract"], company: true },
   { tag: "default_risk", keywords: ["default", "insolvency", "bankruptcy", "downgrade", "stress", "slippages"], company: true },
   { tag: "investigation", keywords: ["probe", "investigation", "fraud", "whistleblower", "scam"], company: true },
   { tag: "fda_risk", keywords: ["usfda", "warning letter", "483 observation"], company: true },

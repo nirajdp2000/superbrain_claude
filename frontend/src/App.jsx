@@ -778,6 +778,7 @@ function MarketGraphic({ dashboard, focus }) {
   const regime = dashboard?.marketContext?.regime || "Loading";
   const riskOn = dashboard?.marketContext?.riskOnScore;
   const regimeColor = riskOn >= 0 ? "green" : "red";
+  const benchmarkStale = dashboard?.marketContext?.benchmarkStale;
 
   return (
     <div className="hero-card hero-card-chart">
@@ -788,6 +789,11 @@ function MarketGraphic({ dashboard, focus }) {
         </div>
         <div className={`mg-regime-badge mg-regime-${regimeColor}`}>{regime}</div>
       </div>
+      {benchmarkStale && (
+        <div style={{fontSize:"10px",color:"var(--amber,#f59e0b)",padding:"2px 0 4px",letterSpacing:"0.03em"}}>
+          ⚠ Benchmark % changes may reflect previous session — market data delayed
+        </div>
+      )}
       <div className="mg-bench-list">
         {rawSeries.map((item) => {
           const val = Number(item.changePct || 0);
@@ -795,7 +801,7 @@ function MarketGraphic({ dashboard, focus }) {
           const pos = val >= 0;
           return (
             <div key={item.label} className="mg-bench-row">
-              <span className="mg-bench-label">{item.label}</span>
+              <span className="mg-bench-label">{item.label}{item.stale ? " ⚠" : ""}</span>
               <div className="mg-bench-bar-wrap">
                 <div className={`mg-bench-bar ${pos ? "mg-bench-bar-pos" : "mg-bench-bar-neg"}`} style={{width:`${Math.max(4, pct)}%`}} />
               </div>
@@ -1815,6 +1821,10 @@ function GodLevelReportPanel({ focus }) {
           <ul className="signal-list" style={{marginTop:"0.25rem"}}>
             {(smartMoney.signals || []).map((s,i) => <li key={i}>{s}</li>)}
           </ul>
+          <div style={{fontSize:"11px",color:"var(--text-muted)",marginTop:"0.4rem"}}>
+            FII net: {smartMoney.fiiNet !== null && smartMoney.fiiNet !== undefined ? `₹${smartMoney.fiiNet}Cr` : "N/A"}.{" "}
+            DII net: {smartMoney.diiNet !== null && smartMoney.diiNet !== undefined ? `₹${smartMoney.diiNet}Cr` : "N/A"}.
+          </div>
         </div>
       )}
 

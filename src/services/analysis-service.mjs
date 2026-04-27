@@ -20,10 +20,10 @@ const SECTOR_FAIR_PE = {
   Financials: 18,
   Healthcare: 30,
   Consumer: 35,
-  Industrials: 24,
+  Industrials: 28,    // raised from 24 — defense/capital goods sub-sectors command higher multiples
   Auto: 20,
   Materials: 16,
-  Energy: 12,
+  Energy: 20,         // raised from 12 — pure PSU oil ~10-12 but conglomerates (Reliance) ~22-28
   Utilities: 17,
   Telecom: 20,
 };
@@ -176,8 +176,17 @@ function formatTag(tag = "") {
   return tag.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function getFairPe(stock) {
-  return SECTOR_FAIR_PE[stock?.sector] || 22;
+function getFairPe(stock, fundamentals = null) {
+  const sectorPe = SECTOR_FAIR_PE[stock?.sector] || 22;
+  // PEG-based override: high-growth stocks deserve higher fair P/E
+  // Use Peter Lynch rule: fair P/E ≈ profit growth rate when PEG=1
+  const profitGrowth = fundamentals?.profitGrowth3y;
+  if (profitGrowth && profitGrowth > 25) {
+    // Cap at 3x sector P/E to prevent extreme overrides
+    const pegBasedPe = Math.min(profitGrowth * 1.5, sectorPe * 3, 120);
+    return Math.max(sectorPe, Math.round(pegBasedPe));
+  }
+  return sectorPe;
 }
 
 function getStrategyWeights(strategy) {
@@ -206,7 +215,7 @@ function resolveHorizonDays(strategy, rawHorizonDays) {
 }
 
 function valuationView(stock, fundamentals) {
-  const fairPe = getFairPe(stock);
+  const fairPe = getFairPe(stock, fundamentals);
   const pe = fundamentals.pe;
 
   if (!pe) {
@@ -247,7 +256,7 @@ function valuationView(stock, fundamentals) {
 
 function computeFundamentalScore(stock, fundamentals) {
   let score = 50;
-  const fairPe = getFairPe(stock);
+  const fairPe = getFairPe(stock, fundamentals);
 
   if (fundamentals.pe) {
     if (fundamentals.pe <= fairPe * 0.9) score += 10;
@@ -320,8 +329,21 @@ function getTagImpact(sector, tag, sentimentScore = 0) {
   return impact;
 }
 
-function buildEventExposure(stock, globalNews) {
-  const sourceItems = [...(globalNews?.macro || []), ...(globalNews?.geopolitical || []), ...(globalNews?.official || [])];
+// Stock-specific event tags that should feed into event exposure score
+const STOCK_EVENT_TAGS = new Set(["order_win", "earnings", "capex", "buyback", "dividend",
+  "rating_upgrade", "rating_downgrade", "fda_risk", "investigation", "default_risk", "governance"]);
+
+function buildEventExposure(stock, globalNews, stockNewsItems = []) {
+  // Include stock-specific items that carry event-relevant tags (e.g. order_win for APOLLO missile license)
+  const relevantStockItems = stockNewsItems.filter(item =>
+    Array.isArray(item.tags) && item.tags.some(t => STOCK_EVENT_TAGS.has(t))
+  );
+  const sourceItems = [
+    ...(globalNews?.macro || []),
+    ...(globalNews?.geopolitical || []),
+    ...(globalNews?.official || []),
+    ...relevantStockItems,
+  ];
   const seen = new Set();
   const items = sourceItems.filter((item) => {
     if (!item?.id || seen.has(item.id)) {
@@ -2360,7 +2382,7 @@ function buildAnalysisRowFromBundle({
   let technicalScore = bundle.technical.score;
   let fundamentalScore = computeFundamentalScore(stock, bundle.fundamentals);
   const macroScore = computeMacroScore(stock, marketContext);
-  const eventExposure = buildEventExposure(stock, globalNews);
+  const eventExposure = buildEventExposure(stock, globalNews, symbolNews?.items || []);
   const riskScore = computeRiskScore(bundle.technical, bundle.fundamentals, newsSummary, marketContext, eventExposure, strictVerification);
 
   // Phase 2: Advanced technical blend

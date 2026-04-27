@@ -1712,11 +1712,21 @@ async function fetchYahooInstrument(ticker, label) {
   const previousClose = Number(meta.chartPreviousClose || meta.previousClose || lastPrice);
   const changePct = previousClose > 0 ? ((lastPrice - previousClose) / previousClose) * 100 : 0;
 
+  // Detect stale data: Yahoo's regularMarketTime tells us the last trade time.
+  // If it's from a previous calendar day (IST), flag the % change as potentially stale.
+  const marketTime = meta.regularMarketTime ? new Date(meta.regularMarketTime * 1000) : null;
+  const nowUtc = new Date();
+  const stale = marketTime
+    ? (nowUtc - marketTime) > 26 * 60 * 60 * 1000  // > 26 hours old = definitely previous session
+    : false;
+
   return {
     label,
     ticker,
     price: Number(lastPrice.toFixed(2)),
     changePct: Number(changePct.toFixed(2)),
+    stale,
+    asOf: marketTime?.toISOString() || null,
   };
 }
 
@@ -1764,11 +1774,14 @@ export async function getMarketContext() {
     - Math.max(0, (brent?.changePct || 0) * 0.5);
 
   const regime = riskOnScore >= 0.8 ? "RISK_ON" : riskOnScore <= -0.8 ? "RISK_OFF" : "BALANCED";
+  // If Nifty or Sensex data is stale (previous session), flag so UI can warn users
+  const benchmarkStale = !!(nifty?.stale || sensex?.stale);
 
   return contextCache.set("market-context", {
     regime,
     riskOnScore: Number(riskOnScore.toFixed(2)),
     benchmarks,
+    benchmarkStale,
     fiiDii,
     generatedAt: new Date().toISOString(),
   });

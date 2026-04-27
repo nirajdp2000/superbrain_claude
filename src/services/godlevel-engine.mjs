@@ -264,7 +264,12 @@ export function detectMACDDivergence(macdHistogram = [], closes = []) {
 export function computeRelativeStrength(stockReturn20d, stockReturn60d, niftyReturn20d, niftyReturn60d) {
   if (stockReturn20d === null || niftyReturn20d === null) return null;
   const rs20 = niftyReturn20d !== 0 ? stockReturn20d / niftyReturn20d : 0;
-  const rs60 = (niftyReturn60d !== null && niftyReturn60d !== 0) ? stockReturn60d / niftyReturn60d : rs20;
+  // When niftyReturn60d unavailable, use niftyReturn20d as proxy — avoids rs60 === rs20 identity bug
+  const rs60 = (niftyReturn60d !== null && niftyReturn60d !== 0)
+    ? stockReturn60d / niftyReturn60d
+    : (stockReturn60d !== null && niftyReturn20d !== null && niftyReturn20d !== 0)
+      ? round2(stockReturn60d / niftyReturn20d)
+      : rs20;
   const rsComposite = round2((rs20 * 0.6 + rs60 * 0.4));
 
   let signal, delta;
@@ -296,7 +301,7 @@ export function computeRelativeStrength(stockReturn20d, stockReturn60d, niftyRet
 // 5. ATR-BASED TARGET & STOP PRICING
 //    Replaces fixed-% heuristic with volatility-calibrated levels
 // ─────────────────────────────────────────────
-export function computeATRTargetsAndStops(candles = [], price, strategy, verdict) {
+export function computeATRTargetsAndStops(candles = [], price, strategy, verdict, techBias = null) {
   if (!price || candles.length < 14) return null;
 
   const highs  = candles.map(c => safeNum(c[1]) || safeNum(c.high)).filter(Boolean);
@@ -330,8 +335,13 @@ export function computeATRTargetsAndStops(candles = [], price, strategy, verdict
     longterm: { target: 6.5, stop: 2.5, t2: 12.0 },
   }[strategy] || { target: 2.5, stop: 1.5, t2: 4.0 };
 
-  const bullish = ["BUY", "STRONG_BUY"].includes(verdict);
-  const bearish = ["SELL", "STRONG_SELL"].includes(verdict);
+  const isExplicitBuy  = ["BUY", "STRONG_BUY"].includes(verdict);
+  const isExplicitSell = ["SELL", "STRONG_SELL"].includes(verdict);
+  // For HOLD/NO_CALL: use techBias to choose direction — avoids all targets going below
+  // price for a stock in a strong uptrend (e.g. RSI 75, +50% 20d return).
+  const goLong = isExplicitBuy  || (!isExplicitSell && techBias !== "BEARISH");
+  const goShort = isExplicitSell || (!isExplicitBuy  && techBias === "BEARISH");
+  const bullish = goLong && !goShort;
 
   const target1 = bullish ? price + atr * mult.target : price - atr * mult.target;
   const target2 = bullish ? price + atr * mult.t2    : price - atr * mult.t2;
@@ -440,23 +450,26 @@ export function classifySmartMoneyFlow(marketContext = {}, optionsData = null, t
   let flowScore = 50;
 
   const fii = marketContext?.fiiDii || {};
-  const fiiNet = safeNum(fii.fiiNetBuy, 0);
-  const diiNet = safeNum(fii.diiNetBuy, 0);
+  // Use null when FII/DII data unavailable — avoids showing ₹0Cr as if real data
+  const fiiDataAvailable = fii && (fii.fiiNetBuy !== undefined || fii.diiNetBuy !== undefined);
+  const fiiNet = fiiDataAvailable ? safeNum(fii.fiiNetBuy, 0) : null;
+  const diiNet = fiiDataAvailable ? safeNum(fii.diiNetBuy, 0) : null;
 
-  // FII + DII both buying = strongest bullish institutional signal
-  if (fiiNet > 1000 && diiNet > 500) {
-    flowScore += 20;
-    signals.push(`FII + DII both buying (₹${round2(fiiNet)}Cr + ₹${round2(diiNet)}Cr) — strongest institutional bullish signal`);
-  } else if (fiiNet < -1000 && diiNet > 800) {
-    // Classic DII catching FII sell — floor signal
-    flowScore += 10;
-    signals.push(`DII buying ₹${round2(diiNet)}Cr vs FII selling ₹${round2(Math.abs(fiiNet))}Cr — market finding floor`);
-  } else if (fiiNet > 2000) {
-    flowScore += 15;
-    signals.push(`Strong FII buying ₹${round2(fiiNet)}Cr — foreign institutional accumulation`);
-  } else if (fiiNet < -2000) {
-    flowScore -= 15;
-    signals.push(`Heavy FII selling ₹${round2(Math.abs(fiiNet))}Cr — foreign institutional distribution`);
+  // FII + DII signals — only when real data is available (non-null)
+  if (fiiNet !== null && diiNet !== null) {
+    if (fiiNet > 1000 && diiNet > 500) {
+      flowScore += 20;
+      signals.push(`FII + DII both buying (₹${round2(fiiNet)}Cr + ₹${round2(diiNet)}Cr) — strongest institutional bullish signal`);
+    } else if (fiiNet < -1000 && diiNet > 800) {
+      flowScore += 10;
+      signals.push(`DII buying ₹${round2(diiNet)}Cr vs FII selling ₹${round2(Math.abs(fiiNet))}Cr — market finding floor`);
+    } else if (fiiNet > 2000) {
+      flowScore += 15;
+      signals.push(`Strong FII buying ₹${round2(fiiNet)}Cr — foreign institutional accumulation`);
+    } else if (fiiNet < -2000) {
+      flowScore -= 15;
+      signals.push(`Heavy FII selling ₹${round2(Math.abs(fiiNet))}Cr — foreign institutional distribution`);
+    }
   }
 
   // Options OI as smart money proxy
@@ -747,7 +760,7 @@ export function generateResearchReport(row, godLevel = {}) {
     const smLines = [
       `Institutional flow: ${smartMoney.classification?.replace(/_/g," ")}. ${smartMoney.interpretation}`,
       smartMoney.signals?.[0] || "",
-      smartMoney.fiiNet !== null ? `FII net: ₹${smartMoney.fiiNet}Cr. DII net: ₹${smartMoney.diiNet}Cr.` : "",
+      smartMoney.fiiNet !== null ? `FII net: ₹${smartMoney.fiiNet}Cr. DII net: ₹${smartMoney.diiNet}Cr.` : "FII net: N/A. DII net: N/A.",
     ].filter(Boolean);
     sections.push({ heading: "Smart Money & Institutional Flows", content: smLines.join(" ") });
   }
@@ -823,19 +836,19 @@ export function enrichWithGodLevel(row, candles = [], marketContext = {}, option
   const macdDivergence = detectMACDDivergence(macdHistogram, closes);
 
   // 4. Relative Strength vs Nifty
-  // Use same-day changePct for both stock and Nifty so the ratio is apples-to-apples.
-  // The 60d stock return is passed as secondary confirmation (niftyReturn60d stays null
-  // because we have no stored 60d Nifty return in marketContext).
+  // Use stock's 20d/60d period returns matched against Nifty 1d (proxy for 20d).
+  // Previously used stockReturn1d as "20d" — wrong. Now uses actual multi-period stock returns.
   const nifty = marketContext?.benchmarks?.find(b => b.label === "Nifty 50");
-  const niftyReturn1d = safeNum(nifty?.changePct, null);       // today's Nifty %
-  const stockReturn1d = safeNum(row.quote?.changePct, null);   // today's stock %
+  const niftyReturn1d = safeNum(nifty?.changePct, null);
   const relativeStrength = computeRelativeStrength(
-    stockReturn1d, tech.return20d,
+    safeNum(tech.return20d, null), safeNum(tech.return60d, null),
     niftyReturn1d, null
   );
 
   // 5. ATR-based targets (replace heuristic targets)
-  const atrTargets = computeATRTargetsAndStops(candles, safeNum(row.quote?.price), strategy, verdict);
+  // Pass techBias so HOLD stocks in uptrend get upside targets, not default-bearish
+  const techBias = tech?.trend === "BULLISH" ? "BULLISH" : tech?.trend === "BEARISH" ? "BEARISH" : null;
+  const atrTargets = computeATRTargetsAndStops(candles, safeNum(row.quote?.price), strategy, verdict, techBias);
 
   // 6. Trend Exhaustion
   const exhaustion = detectTrendExhaustion(candles, rsi14);
