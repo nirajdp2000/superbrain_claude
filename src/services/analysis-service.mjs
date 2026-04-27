@@ -2476,14 +2476,15 @@ function buildAnalysisRowFromBundle({
       signals: advancedTechnical.signals,
       delta: advancedTechnical.delta,
     } : null,
-    fundamentalIntelligence: enhancedFundamental?.available ? {
-      qglp: enhancedFundamental.qglp,
-      coffeeCan: enhancedFundamental.coffeeCan,
-      moat: enhancedFundamental.moat,
-      lynch: enhancedFundamental.lynch,
-      redFlags: enhancedFundamental.redFlags,
-      fundamentalQuality: enhancedFundamental.fundamentalQuality,
-      topSignals: enhancedFundamental.topSignals,
+    fundamentalIntelligence: enhancedFundamental ? {
+      available:          enhancedFundamental.available ?? false,
+      qglp:               enhancedFundamental.qglp              || null,
+      coffeeCan:          enhancedFundamental.coffeeCan          || null,
+      moat:               enhancedFundamental.moat               || null,
+      lynch:              enhancedFundamental.lynch              || null,
+      redFlags:           enhancedFundamental.redFlags           || null,
+      fundamentalQuality: enhancedFundamental.fundamentalQuality || "N/A",
+      topSignals:         enhancedFundamental.topSignals         || [],
     } : null,
     indiaIntelligence: indiaSignals ? {
       signals: indiaSignals.signals,
@@ -2794,7 +2795,11 @@ export async function analyzeMarket(payload = {}) {
       const [options, advanced, fundamental, india] = await Promise.allSettled([
         enrichWithOptionsData(symbol, bundle.quote?.price),
         Promise.resolve(candles.length >= 20 ? computeEnhancedTechnicalScore(candles, bundle.technical?.score || 50) : null),
-        Promise.resolve(computeEnhancedFundamentalScore(bundle.fundamentals, bundle.stock, strategy)),
+        Promise.resolve(computeEnhancedFundamentalScore(
+          bundle.fundamentals?.source === "UNAVAILABLE"
+            ? (() => { const { source: _s, ...rest } = bundle.fundamentals; return rest; })()
+            : (bundle.fundamentals || {}),
+          bundle.stock, strategy)),
         enrichWithIndiaSignals(symbol, bundle.stock, marketContext),
       ]);
       return {
@@ -3077,20 +3082,27 @@ export async function buildDashboard(query = {}) {
         enrichCandles = await getDailyCandles(focus.symbol).catch(() => enrichCandles);
       }
 
+      // Strip source:"UNAVAILABLE" so computeEnhancedFundamentalScore doesn't
+      // short-circuit — we still compute QGLP/moat with whatever data exists.
+      // eslint-disable-next-line no-unused-vars
+      const { source: _fs, ...cleanFundamentals } = (focus.fundamentals || {});
+
       const [indiaRes, fundRes] = await Promise.allSettled([
         enrichWithIndiaSignals(focus.symbol, focus, marketContext || {}),
-        Promise.resolve(computeEnhancedFundamentalScore(focus.fundamentals, focus, strategy)),
+        Promise.resolve(computeEnhancedFundamentalScore(cleanFundamentals, focus, strategy)),
       ]);
 
       const ind    = indiaRes.status === "fulfilled" ? indiaRes.value : null;
       const fun    = fundRes.status  === "fulfilled" ? fundRes.value  : null;
+      // Use base score from whichever technical field exists (fresh rows use technicalSnapshot)
+      const baseScore = focus.technical?.score ?? focus.technicalSnapshot?.score ?? 50;
       const advRaw = enrichCandles.length >= 20
-        ? computeEnhancedTechnicalScore(enrichCandles, focus.technical?.score || 50)
+        ? computeEnhancedTechnicalScore(enrichCandles, baseScore)
         : null;
 
       focus = {
         ...focus,
-        advancedTechnical: advRaw ? {
+        advancedTechnical: (advRaw && advRaw.adx) ? {
           adx:           advRaw.adx,
           supertrend:    advRaw.supertrend,
           wyckoff:       advRaw.wyckoff,
@@ -3108,14 +3120,17 @@ export async function buildDashboard(query = {}) {
           resultsSeason:  ind.resultsSeason,
           delta:          ind.indiaDelta,
         } : null,
-        fundamentalIntelligence: fun?.available ? {
-          qglp:              fun.qglp,
-          coffeeCan:         fun.coffeeCan,
-          moat:              fun.moat,
-          lynch:             fun.lynch,
-          redFlags:          fun.redFlags,
-          fundamentalQuality: fun.fundamentalQuality,
-          topSignals:        fun.topSignals,
+        // Always set fundamentalIntelligence — even with partial data it's
+        // better than null; fundamentalQuality defaults to "N/A" when sparse.
+        fundamentalIntelligence: fun ? {
+          available:         fun.available ?? false,
+          qglp:              fun.qglp              || null,
+          coffeeCan:         fun.coffeeCan         || null,
+          moat:              fun.moat               || null,
+          lynch:             fun.lynch              || null,
+          redFlags:          fun.redFlags           || null,
+          fundamentalQuality: fun.fundamentalQuality || "N/A",
+          topSignals:        fun.topSignals         || [],
         } : null,
       };
     }

@@ -1876,8 +1876,10 @@ function AdvancedIntelPanel({ focus, dashboard }) {
   const adv   = focus?.advancedTechnical;
   const fi    = focus?.fundamentalIntelligence;
   // Use stock-specific india intel first; fall back to global dashboard intel
-  // (events, GIFT NIFTY, sector rotation available even before stock search)
   const india = focus?.indiaIntelligence || dashboard?.globalIndiaIntel || null;
+  // fresh rows use `technicalSnapshot`; cached rows use `technical`
+  const baseTech = focus?.technical || focus?.technicalSnapshot || {};
+  const baseFund = focus?.fundamentals || {};
 
   if (!focus) return (
     <Empty text="Search for any NSE stock to activate Advanced Intelligence — options chain, technical indicators, fundamental frameworks, and India-specific signals." />
@@ -1896,17 +1898,32 @@ function AdvancedIntelPanel({ focus, dashboard }) {
       id: "technical",
       label: "Technical",
       icon: "∿",
-      value: adv ? (adv.supertrend?.direction || "--") : focus.technical?.score != null ? `Score ${Math.round(focus.technical.score)}` : "--",
-      sub: adv ? `ADX ${adv.adx?.adx != null ? Number(adv.adx.adx).toFixed(1) : "--"}` : "Base data only",
-      color: adv?.supertrend?.direction === "BULLISH" || (!adv && focus.technical?.score >= 60) ? "adv-c-green" : adv?.supertrend?.direction === "BEARISH" || (!adv && focus.technical?.score < 40) ? "adv-c-red" : "adv-c-amber",
+      value: adv?.supertrend?.direction ? adv.supertrend.direction
+           : baseTech?.rsi14 != null ? `RSI ${Number(baseTech.rsi14).toFixed(0)}`
+           : baseTech?.score != null ? `Score ${Math.round(baseTech.score)}`
+           : "Loading…",
+      sub: adv?.adx?.adx != null ? `ADX ${Number(adv.adx.adx).toFixed(1)}`
+         : baseTech?.trendBias ? baseTech.trendBias
+         : baseTech?.return20d != null ? `${baseTech.return20d > 0 ? "+" : ""}${Number(baseTech.return20d).toFixed(1)}% 20d`
+         : "Base data",
+      color: adv?.supertrend?.direction === "BULLISH" || baseTech?.score >= 60 ? "adv-c-green"
+           : adv?.supertrend?.direction === "BEARISH" || (baseTech?.score != null && baseTech.score < 40) ? "adv-c-red"
+           : "adv-c-amber",
     },
     {
       id: "fundamentals",
       label: "Fundamentals",
       icon: "◈",
-      value: fi ? (fi.fundamentalQuality || "--") : focus.fundamentals?.score != null ? `Score ${Math.round(focus.fundamentals.score)}` : "--",
-      sub: fi ? `QGLP ${fi.qglp?.totalScore || "--"} / 100` : "Base data only",
-      color: fi?.fundamentalQuality === "HIGH" || (!fi && focus.fundamentals?.score >= 60) ? "adv-c-green" : fi?.fundamentalQuality === "LOW" || (!fi && focus.fundamentals?.score < 40) ? "adv-c-red" : "adv-c-amber",
+      value: fi?.fundamentalQuality && fi.fundamentalQuality !== "N/A" ? fi.fundamentalQuality
+           : baseFund?.roe != null ? `ROE ${Number(baseFund.roe).toFixed(1)}%`
+           : baseFund?.pe != null ? `PE ${Number(baseFund.pe).toFixed(1)}`
+           : "Loading…",
+      sub: fi?.qglp?.totalScore != null ? `QGLP ${fi.qglp.totalScore} / 100`
+         : baseFund?.roce != null ? `ROCE ${Number(baseFund.roce).toFixed(1)}%`
+         : "Base data",
+      color: fi?.fundamentalQuality === "HIGH" || baseFund?.roe > 15 ? "adv-c-green"
+           : fi?.fundamentalQuality === "LOW" ? "adv-c-red"
+           : "adv-c-amber",
     },
     {
       id: "india",
@@ -2042,13 +2059,13 @@ function AdvancedIntelPanel({ focus, dashboard }) {
                 <strong>Advanced indicators unavailable</strong>
                 <p>ADX, Supertrend, Wyckoff, and Elliott Wave require ≥20 days of candle history. Showing base technical data below.</p>
               </div>
-              {focus.technical && (
+              {Object.keys(baseTech).length > 0 && (
                 <div className="verdict-stats" style={{marginTop:"1rem"}}>
-                  <StatBox label="RSI (14)" value={focus.technical.rsi14 != null ? Number(focus.technical.rsi14).toFixed(1) : "--"} sub={focus.technical.rsi14 > 70 ? "Overbought" : focus.technical.rsi14 < 30 ? "Oversold" : "Neutral"} color={focus.technical.rsi14 > 70 ? "red" : focus.technical.rsi14 < 30 ? "green" : "amber"} />
-                  <StatBox label="20d Return" value={focus.technical.return20d != null ? `${focus.technical.return20d > 0 ? "+" : ""}${Number(focus.technical.return20d).toFixed(1)}%` : "--"} color={focus.technical.return20d > 0 ? "green" : "red"} />
-                  <StatBox label="60d Return" value={focus.technical.return60d != null ? `${focus.technical.return60d > 0 ? "+" : ""}${Number(focus.technical.return60d).toFixed(1)}%` : "--"} color={focus.technical.return60d > 0 ? "green" : "red"} />
-                  <StatBox label="Vol Surge" value={focus.technical.volumeSurge != null ? `${Number(focus.technical.volumeSurge).toFixed(2)}x` : "--"} color={focus.technical.volumeSurge > 1.5 ? "green" : "amber"} />
-                  <StatBox label="Tech Score" value={focus.technical.score != null ? Number(focus.technical.score).toFixed(0) : "--"} sub="/ 100" color={focus.technical.score >= 60 ? "green" : focus.technical.score >= 40 ? "amber" : "red"} />
+                  <StatBox label="RSI (14)" value={baseTech.rsi14 != null ? Number(baseTech.rsi14).toFixed(1) : "--"} sub={baseTech.rsi14 > 70 ? "Overbought" : baseTech.rsi14 < 30 ? "Oversold" : "Neutral"} color={baseTech.rsi14 > 70 ? "red" : baseTech.rsi14 < 30 ? "green" : "amber"} />
+                  <StatBox label="20d Return" value={baseTech.return20d != null ? `${baseTech.return20d > 0 ? "+" : ""}${Number(baseTech.return20d).toFixed(1)}%` : "--"} color={baseTech.return20d > 0 ? "green" : "red"} />
+                  <StatBox label="60d Return" value={baseTech.return60d != null ? `${baseTech.return60d > 0 ? "+" : ""}${Number(baseTech.return60d).toFixed(1)}%` : "--"} color={baseTech.return60d > 0 ? "green" : "red"} />
+                  <StatBox label="Vol Surge" value={baseTech.volumeSurge != null ? `${Number(baseTech.volumeSurge).toFixed(2)}x` : "--"} color={baseTech.volumeSurge > 1.5 ? "green" : "amber"} />
+                  <StatBox label="Tech Score" value={baseTech.score != null ? Number(baseTech.score).toFixed(0) : "--"} sub="/ 100" color={baseTech.score >= 60 ? "green" : baseTech.score >= 40 ? "amber" : "red"} />
                 </div>
               )}
             </div>
