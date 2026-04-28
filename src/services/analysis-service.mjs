@@ -180,7 +180,7 @@ function getFairPe(stock, fundamentals = null) {
   const sectorPe = SECTOR_FAIR_PE[stock?.sector] || 22;
   // PEG-based override: high-growth stocks deserve higher fair P/E
   // Use Peter Lynch rule: fair P/E ≈ profit growth rate when PEG=1
-  const profitGrowth = fundamentals?.profitGrowth3y;
+  const profitGrowth = fundamentals?.profitGrowth3yr;
   if (profitGrowth && profitGrowth > 25) {
     // Cap at 3x sector P/E to prevent extreme overrides
     const pegBasedPe = Math.min(profitGrowth * 1.5, sectorPe * 3, 120);
