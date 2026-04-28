@@ -847,7 +847,7 @@ export function enrichWithGodLevel(row, candles = [], marketContext = {}, option
 
   // 5. ATR-based targets (replace heuristic targets)
   // Pass techBias so HOLD stocks in uptrend get upside targets, not default-bearish
-  const techBias = tech?.trend === "BULLISH" ? "BULLISH" : tech?.trend === "BEARISH" ? "BEARISH" : null;
+  const techBias = tech?.trendBias === "BULLISH" ? "BULLISH" : tech?.trendBias === "BEARISH" ? "BEARISH" : null;
   const atrTargets = computeATRTargetsAndStops(candles, safeNum(row.quote?.price), strategy, verdict, techBias);
 
   // 6. Trend Exhaustion

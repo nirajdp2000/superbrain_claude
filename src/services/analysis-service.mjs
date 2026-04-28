@@ -480,7 +480,11 @@ function buildTargets(score, riskScore, price, strategy, verdict = "HOLD") {
 
   const targetPct = clamp((score - 50) * targetMultiplier - riskScore * 0.035, minTarget, maxTarget);
   const stopPct = clamp(stopBase + riskScore * stopRiskFactor, minStop, maxStop);
-  const bearish = ["SELL", "STRONG_SELL"].includes(verdict) || targetPct < 0;
+  // HOLD/BUY verdicts only go bearish on strongly negative score signal (< -1.5%);
+  // prevents marginal-negative targetPct flipping direction for neutral-scoring HOLD stocks.
+  const explicitBearish = ["SELL", "STRONG_SELL"].includes(verdict);
+  const explicitBullish = ["BUY", "STRONG_BUY"].includes(verdict);
+  const bearish = explicitBearish || (!explicitBullish && targetPct < -1.5);
 
   return {
     targetPrice: Number((price * (1 + targetPct / 100)).toFixed(2)),
@@ -1431,7 +1435,7 @@ function buildDriverCandidates(row) {
       title: "Macro regime and institutional flow",
       magnitude: macroMagnitude,
       direction: Number(row.scoreBreakdown?.macro || 50) >= 55 ? "bullish" : Number(row.scoreBreakdown?.macro || 50) <= 45 ? "bearish" : "neutral",
-      signal: `Market regime is ${row.marketContext?.regime || "BALANCED"} with FII flow ${fiiFlow >= 0 ? "positive" : "negative"} at ${fiiFlow}.`,
+      signal: `Market regime is ${row.marketContext?.regime || "BALANCED"} with FII flow ${fiiFlow !== 0 ? (fiiFlow >= 0 ? "positive" : "negative") + " at ₹" + fiiFlow + "Cr" : "unavailable"}.`,
       what: `Nifty ${nifty?.changePct ?? "--"}%, Sensex ${sensex?.changePct ?? "--"}%, USDINR ${usdinr?.changePct ?? "--"}%, risk-on score ${row.marketContext?.riskOnScore ?? "--"}.`,
       why: `Institutional flow and cross-asset moves shift risk appetite for ${row.sector} names.`,
       impact: "This sets the background risk budget, position sizing, and how much follow-through a stock-specific setup can realistically get.",
